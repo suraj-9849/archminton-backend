@@ -15,15 +15,16 @@ import venueRoutes from './routes/venue.routes';
 import courtRoutes from './routes/court.routes';
 import bookingRoutes from './routes/booking.routes';
 import societyRoutes from './routes/society.routes';
+import courseRoutes from './routes/course.routes';
 
 // Import admin routes
 import adminDashboardRoutes from './routes/admin/dashboard.routes';
 import adminUserRoutes from './routes/admin/user.routes';
 import adminVenueRoutes from './routes/admin/venue.routes';
 import adminSocietyRoutes from './routes/admin/society.routes';
-// Uncomment these as you implement them
 import adminCourtRoutes from './routes/admin/court.routes';
 import adminBookingRoutes from './routes/admin/booking.routes';
+import adminCourseRoutes from './routes/admin/course.routes';
 
 // Initialize Express app
 const app = express();
@@ -48,15 +49,16 @@ app.use('/api/venues', venueRoutes);
 app.use('/api/courts', courtRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/societies', societyRoutes);
+app.use('/api/courses', courseRoutes);
 
 // Admin Routes
 app.use('/api/admin/dashboard', adminDashboardRoutes);
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/admin/venues', adminVenueRoutes);
 app.use('/api/admin/societies', adminSocietyRoutes);
-// Uncomment these as you implement them
 app.use('/api/admin/courts', adminCourtRoutes);
 app.use('/api/admin/bookings', adminBookingRoutes);
+app.use('/api/admin/courses', adminCourseRoutes);
 
 // Root route for API status
 app.get('/', (req: Request, res: Response) => {
@@ -71,6 +73,7 @@ app.get('/', (req: Request, res: Response) => {
       courtManagement: true,
       bookingSystem: true,
       societyManagement: true,
+      courseManagement: true,
       adminDashboard: true,
       roleBasedAccess: true
     }
@@ -127,6 +130,12 @@ app.get('/api', (req: Request, res: Response) => {
         payment: 'POST /api/bookings/:id/payment',
         cancel: 'POST /api/bookings/:id/cancel'
       },
+      courses: {
+        list: 'GET /api/courses',
+        details: 'GET /api/courses/:id',
+        upcoming: 'GET /api/courses/upcoming',
+        enroll: 'POST /api/courses/:id/enroll'
+      },
       societies: {
         list: 'GET /api/societies',
         details: 'GET /api/societies/:id',
@@ -136,7 +145,10 @@ app.get('/api', (req: Request, res: Response) => {
         dashboard: 'GET /api/admin/dashboard/stats',
         users: 'GET /api/admin/users',
         venues: 'GET /api/admin/venues',
-        societies: 'GET /api/admin/societies'
+        societies: 'GET /api/admin/societies',
+        courts: 'GET /api/admin/courts',
+        bookings: 'GET /api/admin/bookings',
+        courses: 'GET /api/admin/courses'
       }
     }
   });
