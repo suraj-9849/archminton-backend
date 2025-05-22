@@ -1,0 +1,241 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 Int                @id @default(autoincrement())
+  email              String             @unique
+  password           String
+  name               String
+  phone              String?
+  gender             String?
+  role               Role               @default(USER)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  societyMemberships SocietyMember[]
+  bookings           Booking[]
+  courseEnrollments  CourseEnrollment[]
+  venues             Venue[]            @relation("VenueUserAccess")
+
+  VenueUserAccess VenueUserAccess[]
+}
+
+enum Role {
+  USER
+  VENUE_MANAGER
+  ADMIN
+  SUPERADMIN
+}
+
+model Society {
+  id            Int             @id @default(autoincrement())
+  name          String
+  location      String
+  description   String?
+  contactPerson String?
+  contactPhone  String?
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  members       SocietyMember[]
+  venues        Venue[]
+}
+
+model SocietyMember {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  societyId Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+  society   Society  @relation(fields: [societyId], references: [id])
+
+  @@unique([userId, societyId])
+}
+
+model Venue {
+  id              Int               @id @default(autoincrement())
+  name            String
+  description     String?
+  location        String
+  latitude        Float?
+  longitude       Float?
+  contactPhone    String?
+  contactEmail    String?
+  isActive        Boolean           @default(true)
+  venueType       VenueType         @default(PUBLIC)
+  societyId       Int?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  society         Society?          @relation(fields: [societyId], references: [id])
+  courts          Court[]
+  images          VenueImage[]
+  venueUserAccess VenueUserAccess[]
+
+  User User[] @relation("VenueUserAccess")
+}
+
+enum VenueType {
+  PUBLIC
+  PRIVATE
+}
+
+model VenueUserAccess {
+  id      Int   @id @default(autoincrement())
+  venueId Int
+  userId  Int
+  venue   Venue @relation(fields: [venueId], references: [id])
+  user    User  @relation(fields: [userId], references: [id])
+
+  @@unique([venueId, userId])
+}
+
+model VenueImage {
+  id        Int      @id @default(autoincrement())
+  venueId   Int
+  imageUrl  String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  venue     Venue    @relation(fields: [venueId], references: [id])
+}
+
+model Court {
+  id           Int        @id @default(autoincrement())
+  name         String
+  sportType    SportType
+  description  String?
+  venueId      Int
+  pricePerHour Decimal    @db.Decimal(10, 2)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  venue        Venue      @relation(fields: [venueId], references: [id])
+  bookings     Booking[]
+  timeSlots    TimeSlot[]
+}
+
+enum SportType {
+  BADMINTON
+  TENNIS
+  FOOTBALL
+  CRICKET
+  SWIMMING
+  BASKETBALL
+  VOLLEYBALL
+  OTHER
+}
+
+model TimeSlot {
+  id        Int       @id @default(autoincrement())
+  courtId   Int
+  dayOfWeek Int
+  startTime String
+  endTime   String
+  isActive  Boolean   @default(true)
+  court     Court     @relation(fields: [courtId], references: [id])
+  bookings  Booking[]
+
+  @@unique([courtId, dayOfWeek, startTime, endTime])
+}
+
+model Booking {
+  id            Int            @id @default(autoincrement())
+  userId        Int
+  courtId       Int
+  timeSlotId    Int
+  bookingDate   DateTime
+  startTime     String
+  endTime       String
+  status        BookingStatus  @default(CONFIRMED)
+  totalAmount   Decimal        @db.Decimal(10, 2)
+  paymentStatus PaymentStatus  @default(PENDING)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  user          User           @relation(fields: [userId], references: [id])
+  court         Court          @relation(fields: [courtId], references: [id])
+  timeSlot      TimeSlot       @relation(fields: [timeSlotId], references: [id])
+  addOns        BookingAddOn[]
+  payment       Payment?
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model BookingAddOn {
+  id        Int     @id @default(autoincrement())
+  bookingId Int
+  addOnType String
+  quantity  Int     @default(1)
+  price     Decimal @db.Decimal(10, 2)
+  booking   Booking @relation(fields: [bookingId], references: [id])
+}
+
+model Payment {
+  id            Int           @id @default(autoincrement())
+  bookingId     Int           @unique
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentMethod PaymentMethod @default(ONLINE)
+  transactionId String?
+  status        PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  booking       Booking       @relation(fields: [bookingId], references: [id])
+}
+
+enum PaymentMethod {
+  ONLINE
+  CASH
+  BANK_TRANSFER
+}
+
+model Course {
+  id          Int                @id @default(autoincrement())
+  name        String
+  description String?
+  sportType   SportType
+  venueId     Int
+  price       Decimal            @db.Decimal(10, 2)
+  duration    Int // in days
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  enrollments CourseEnrollment[]
+}
+
+model CourseEnrollment {
+  id            Int           @id @default(autoincrement())
+  userId        Int
+  courseId      Int
+  startDate     DateTime
+  endDate       DateTime
+  paymentStatus PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  user          User          @relation(fields: [userId], references: [id])
+  course        Course        @relation(fields: [courseId], references: [id])
+}
