@@ -27,20 +27,20 @@ jspm_packages/
 .env.test.local
 .env.production.local
 
-# Build directories
-dist
-build
+# Build output
+dist/
+build/
 
-# Upload directory
+# Uploads (but keep folder structure)
 uploads/*
 !uploads/.gitkeep
 
-# Coverage directory
-coverage
+# Test coverage
+coverage/
 
-# Editor directories and files
-.idea
-.vscode
+# IDEs and editors
+.idea/
+.vscode/
 *.suo
 *.ntvs*
 *.njsproj
