@@ -206,16 +206,9 @@ export class AdminVenueController {
         errorResponse(res, "Invalid venue type", 400);
         return;
       }
-      if (societyId == null) {
-        const society = await prisma.society.findUnique({
-          where: { id: (societyId) },
-        });
 
-        if (!society) {
-          errorResponse(res, "Society not found", 404);
-          return;
-        }
-      } else {
+      // Fixed validation logic for society
+      if (societyId !== undefined && societyId !== null) {
         const society = await prisma.society.findUnique({
           where: { id: Number(societyId) },
         });
@@ -237,7 +230,7 @@ export class AdminVenueController {
           contactPhone,
           contactEmail,
           venueType,
-          societyId: societyId ? Number(societyId) : undefined,
+          societyId: societyId ? Number(societyId) : null,
           isActive,
         },
         include: {
