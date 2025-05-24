@@ -155,4 +155,7 @@ const timeSlotIdValidation = [
 
 router.delete('/timeslots/:id', validate(timeSlotIdValidation), adminCourtController.deleteTimeSlot);
 
+router.get('/:id', validate(courtIdValidation), adminCourtController.getCourtById);
+
+
 export default router;
