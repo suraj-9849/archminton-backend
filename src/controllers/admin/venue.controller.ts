@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
-import { PrismaClient, VenueType } from '@prisma/client';
-import { successResponse, errorResponse } from '../../utils/response';
-import logger from '../../utils/logger';
+import { Request, Response } from "express";
+import { PrismaClient, VenueType } from "@prisma/client";
+import { successResponse, errorResponse } from "../../utils/response";
+import logger from "../../utils/logger";
 
 const prisma = new PrismaClient();
 
@@ -19,18 +19,18 @@ export class AdminVenueController {
       const limit = Number(req.query.limit) || 10;
       const search = req.query.search as string | undefined;
       const venueType = req.query.venueType as VenueType | undefined;
-      const isActive = req.query.isActive !== undefined 
-        ? req.query.isActive === 'true' 
-        : undefined;
+      const isActive =
+        req.query.isActive !== undefined
+          ? req.query.isActive === "true"
+          : undefined;
 
-      // Build filter conditions
       const where: any = {};
 
       if (search) {
         where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { location: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } }
+          { name: { contains: search, mode: "insensitive" } },
+          { location: { contains: search, mode: "insensitive" } },
+          { description: { contains: search, mode: "insensitive" } },
         ];
       }
 
@@ -42,7 +42,6 @@ export class AdminVenueController {
         where.isActive = isActive;
       }
 
-      // Calculate pagination
       const skip = (page - 1) * limit;
 
       const [venues, totalVenues] = await Promise.all([
@@ -52,34 +51,34 @@ export class AdminVenueController {
             society: {
               select: {
                 id: true,
-                name: true
-              }
+                name: true,
+              },
             },
             courts: {
               select: {
                 id: true,
                 name: true,
                 sportType: true,
-                isActive: true
-              }
+                isActive: true,
+              },
             },
             images: {
               where: { isDefault: true },
-              take: 1
+              take: 1,
             },
             _count: {
               select: {
-                courts: true
-              }
-            }
+                courts: true,
+              },
+            },
           },
           orderBy: {
-            createdAt: 'desc'
+            createdAt: "desc",
           },
           skip,
-          take: limit
+          take: limit,
         }),
-        prisma.venue.count({ where })
+        prisma.venue.count({ where }),
       ]);
 
       const totalPages = Math.ceil(totalVenues / limit);
@@ -94,14 +93,14 @@ export class AdminVenueController {
             totalVenues,
             totalPages,
             hasNext: page < totalPages,
-            hasPrevious: page > 1
-          }
+            hasPrevious: page > 1,
+          },
         },
-        'Venues retrieved successfully'
+        "Venues retrieved successfully"
       );
     } catch (error: any) {
-      logger.error('Error getting venues (admin):', error);
-      errorResponse(res, error.message || 'Error retrieving venues', 500);
+      logger.error("Error getting venues (admin):", error);
+      errorResponse(res, error.message || "Error retrieving venues", 500);
     }
   }
 
@@ -120,23 +119,21 @@ export class AdminVenueController {
         contactPhone,
         contactEmail,
         venueType,
-        societyId
+        societyId,
       } = req.body;
 
-      // Validate venue type
       if (!Object.values(VenueType).includes(venueType)) {
-        errorResponse(res, 'Invalid venue type', 400);
+        errorResponse(res, "Invalid venue type", 400);
         return;
       }
 
-      // If private venue, check if society exists
       if (venueType === VenueType.PRIVATE && societyId) {
         const society = await prisma.society.findUnique({
-          where: { id: Number(societyId) }
+          where: { id: Number(societyId) },
         });
 
         if (!society) {
-          errorResponse(res, 'Society not found', 404);
+          errorResponse(res, "Society not found", 404);
           return;
         }
       }
@@ -151,22 +148,22 @@ export class AdminVenueController {
           contactPhone,
           contactEmail,
           venueType,
-          societyId: societyId ? Number(societyId) : null
+          societyId: societyId ? Number(societyId) : null,
         },
         include: {
           society: {
             select: {
               id: true,
-              name: true
-            }
-          }
-        }
+              name: true,
+            },
+          },
+        },
       });
 
-      successResponse(res, venue, 'Venue created successfully', 201);
+      successResponse(res, venue, "Venue created successfully", 201);
     } catch (error: any) {
-      logger.error('Error creating venue:', error);
-      errorResponse(res, error.message || 'Error creating venue', 400);
+      logger.error("Error creating venue:", error);
+      errorResponse(res, error.message || "Error creating venue", 400);
     }
   }
 
@@ -177,9 +174,9 @@ export class AdminVenueController {
   async updateVenue(req: Request, res: Response): Promise<void> {
     try {
       const venueId = Number(req.params.id);
-      
+
       if (isNaN(venueId)) {
-        errorResponse(res, 'Invalid venue ID', 400);
+        errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
@@ -193,33 +190,38 @@ export class AdminVenueController {
         contactEmail,
         venueType,
         societyId,
-        isActive
+        isActive,
       } = req.body;
 
-      // Check if venue exists
       const existingVenue = await prisma.venue.findUnique({
-        where: { id: venueId }
+        where: { id: venueId },
       });
 
       if (!existingVenue) {
-        errorResponse(res, 'Venue not found', 404);
+        errorResponse(res, "Venue not found", 404);
         return;
       }
 
-      // Validate venue type if provided
       if (venueType && !Object.values(VenueType).includes(venueType)) {
-        errorResponse(res, 'Invalid venue type', 400);
+        errorResponse(res, "Invalid venue type", 400);
         return;
       }
-
-      // If changing to private venue or updating societyId, check if society exists
-      if (societyId) {
+      if (societyId == null) {
         const society = await prisma.society.findUnique({
-          where: { id: Number(societyId) }
+          where: { id: (societyId) },
         });
 
         if (!society) {
-          errorResponse(res, 'Society not found', 404);
+          errorResponse(res, "Society not found", 404);
+          return;
+        }
+      } else {
+        const society = await prisma.society.findUnique({
+          where: { id: Number(societyId) },
+        });
+
+        if (!society) {
+          errorResponse(res, "Society not found", 404);
           return;
         }
       }
@@ -236,30 +238,30 @@ export class AdminVenueController {
           contactEmail,
           venueType,
           societyId: societyId ? Number(societyId) : undefined,
-          isActive
+          isActive,
         },
         include: {
           society: {
             select: {
               id: true,
-              name: true
-            }
+              name: true,
+            },
           },
           courts: {
             select: {
               id: true,
               name: true,
               sportType: true,
-              isActive: true
-            }
-          }
-        }
+              isActive: true,
+            },
+          },
+        },
       });
 
-      successResponse(res, venue, 'Venue updated successfully');
+      successResponse(res, venue, "Venue updated successfully");
     } catch (error: any) {
-      logger.error('Error updating venue:', error);
-      errorResponse(res, error.message || 'Error updating venue', 400);
+      logger.error("Error updating venue:", error);
+      errorResponse(res, error.message || "Error updating venue", 400);
     }
   }
 
@@ -270,13 +272,12 @@ export class AdminVenueController {
   async deleteVenue(req: Request, res: Response): Promise<void> {
     try {
       const venueId = Number(req.params.id);
-      
+
       if (isNaN(venueId)) {
-        errorResponse(res, 'Invalid venue ID', 400);
+        errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
-      // Check if venue exists
       const venue = await prisma.venue.findUnique({
         where: { id: venueId },
         include: {
@@ -285,40 +286,43 @@ export class AdminVenueController {
               bookings: {
                 where: {
                   status: {
-                    in: ['PENDING', 'CONFIRMED']
-                  }
-                }
-              }
-            }
-          }
-        }
+                    in: ["PENDING", "CONFIRMED"],
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!venue) {
-        errorResponse(res, 'Venue not found', 404);
+        errorResponse(res, "Venue not found", 404);
         return;
       }
 
-      // Check if venue has active bookings
-      const activeBookings = venue.courts.some(court => court.bookings.length > 0);
-      
+      const activeBookings = venue.courts.some(
+        (court) => court.bookings.length > 0
+      );
+
       if (activeBookings) {
-        // Soft delete - deactivate venue
         await prisma.venue.update({
           where: { id: venueId },
-          data: { isActive: false }
+          data: { isActive: false },
         });
-        successResponse(res, null, 'Venue deactivated successfully (has active bookings)');
+        successResponse(
+          res,
+          null,
+          "Venue deactivated successfully (has active bookings)"
+        );
       } else {
-        // Hard delete venue and associated courts
         await prisma.venue.delete({
-          where: { id: venueId }
+          where: { id: venueId },
         });
-        successResponse(res, null, 'Venue deleted successfully');
+        successResponse(res, null, "Venue deleted successfully");
       }
     } catch (error: any) {
-      logger.error('Error deleting venue:', error);
-      errorResponse(res, error.message || 'Error deleting venue', 400);
+      logger.error("Error deleting venue:", error);
+      errorResponse(res, error.message || "Error deleting venue", 400);
     }
   }
 
@@ -329,9 +333,9 @@ export class AdminVenueController {
   async getVenueById(req: Request, res: Response): Promise<void> {
     try {
       const venueId = Number(req.params.id);
-      
+
       if (isNaN(venueId)) {
-        errorResponse(res, 'Invalid venue ID', 400);
+        errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
@@ -342,14 +346,14 @@ export class AdminVenueController {
           courts: {
             include: {
               timeSlots: {
-                where: { isActive: true }
+                where: { isActive: true },
               },
               _count: {
                 select: {
-                  bookings: true
-                }
-              }
-            }
+                  bookings: true,
+                },
+              },
+            },
           },
           images: true,
           venueUserAccess: {
@@ -358,23 +362,27 @@ export class AdminVenueController {
                 select: {
                   id: true,
                   name: true,
-                  email: true
-                }
-              }
-            }
-          }
-        }
+                  email: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!venue) {
-        errorResponse(res, 'Venue not found', 404);
+        errorResponse(res, "Venue not found", 404);
         return;
       }
 
-      successResponse(res, venue, 'Venue details retrieved successfully');
+      successResponse(res, venue, "Venue details retrieved successfully");
     } catch (error: any) {
-      logger.error('Error getting venue details (admin):', error);
-      errorResponse(res, error.message || 'Error retrieving venue details', 500);
+      logger.error("Error getting venue details (admin):", error);
+      errorResponse(
+        res,
+        error.message || "Error retrieving venue details",
+        500
+      );
     }
   }
 
@@ -386,79 +394,75 @@ export class AdminVenueController {
     try {
       const venueId = Number(req.params.id);
       const { userId } = req.body;
-      
+
       if (isNaN(venueId)) {
-        errorResponse(res, 'Invalid venue ID', 400);
+        errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
       if (!userId || isNaN(Number(userId))) {
-        errorResponse(res, 'Valid user ID is required', 400);
+        errorResponse(res, "Valid user ID is required", 400);
         return;
       }
 
-      // Check if venue exists
       const venue = await prisma.venue.findUnique({
-        where: { id: venueId }
+        where: { id: venueId },
       });
 
       if (!venue) {
-        errorResponse(res, 'Venue not found', 404);
+        errorResponse(res, "Venue not found", 404);
         return;
       }
 
-      // Check if user exists
       const user = await prisma.user.findUnique({
-        where: { id: Number(userId) }
+        where: { id: Number(userId) },
       });
 
       if (!user) {
-        errorResponse(res, 'User not found', 404);
+        errorResponse(res, "User not found", 404);
         return;
       }
 
-      // Check if access already exists
       const existingAccess = await prisma.venueUserAccess.findUnique({
         where: {
           venueId_userId: {
             venueId,
-            userId: Number(userId)
-          }
-        }
+            userId: Number(userId),
+          },
+        },
       });
 
       if (existingAccess) {
-        errorResponse(res, 'User already has access to this venue', 400);
+        errorResponse(res, "User already has access to this venue", 400);
         return;
       }
 
-      // Grant access
       const access = await prisma.venueUserAccess.create({
         data: {
           venueId,
-          userId: Number(userId)
+          userId: Number(userId),
         },
         include: {
           user: {
             select: {
               id: true,
               name: true,
-              email: true
-            }
+              email: true,
+            },
           },
           venue: {
             select: {
               id: true,
-              name: true
-            }
-          }
-        }
+              name: true,
+            },
+          },
+        },
       });
 
-      successResponse(res, access, 'Venue access granted successfully');
+      successResponse(res, access, "Venue access granted successfully");
     } catch (error: any) {
-      logger.error('Error granting venue access:', error);
-      errorResponse(res, error.message || 'Error granting venue access', 400);
+      logger.error("Error granting venue access:", error);
+      errorResponse(res, error.message || "Error granting venue access", 400);
     }
   }
 
@@ -470,41 +474,39 @@ export class AdminVenueController {
     try {
       const venueId = Number(req.params.id);
       const userId = Number(req.params.userId);
-      
+
       if (isNaN(venueId) || isNaN(userId)) {
-        errorResponse(res, 'Invalid venue ID or user ID', 400);
+        errorResponse(res, "Invalid venue ID or user ID", 400);
         return;
       }
 
-      // Check if access exists
       const access = await prisma.venueUserAccess.findUnique({
         where: {
           venueId_userId: {
             venueId,
-            userId
-          }
-        }
+            userId,
+          },
+        },
       });
 
       if (!access) {
-        errorResponse(res, 'Venue access not found', 404);
+        errorResponse(res, "Venue access not found", 404);
         return;
       }
 
-      // Revoke access
       await prisma.venueUserAccess.delete({
         where: {
           venueId_userId: {
             venueId,
-            userId
-          }
-        }
+            userId,
+          },
+        },
       });
 
-      successResponse(res, null, 'Venue access revoked successfully');
+      successResponse(res, null, "Venue access revoked successfully");
     } catch (error: any) {
-      logger.error('Error revoking venue access:', error);
-      errorResponse(res, error.message || 'Error revoking venue access', 400);
+      logger.error("Error revoking venue access:", error);
+      errorResponse(res, error.message || "Error revoking venue access", 400);
     }
   }
 }

@@ -26,18 +26,13 @@ interface UpdateSocietyInput {
  * Service for society-related operations
  */
 export class SocietyService {
-  /**
-   * Get all societies with optional filters
-   */
   async getAllSocieties(filters?: { isActive?: boolean; search?: string }) {
     const where: any = {};
 
-    // Add active filter
     if (filters?.isActive !== undefined) {
       where.isActive = filters.isActive;
     }
 
-    // Add search filter
     if (filters?.search) {
       where.OR = [
         { name: { contains: filters.search, mode: 'insensitive' } },
@@ -86,9 +81,6 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Get society by ID with detailed information
-   */
   async getSocietyById(societyId: number) {
     const society = await prisma.society.findUnique({
       where: { id: societyId },
@@ -120,6 +112,16 @@ export class SocietyService {
               }
             }
           }
+        },
+        _count: {
+          select: {
+            members: {
+              where: { isActive: true }
+            },
+            venues: {
+              where: { isActive: true }
+            }
+          }
         }
       }
     });
@@ -128,14 +130,22 @@ export class SocietyService {
       throw new Error('Society not found');
     }
 
-    return society;
+    const totalCourts = society.venues.reduce((sum, venue) => sum + venue.courts.length, 0);
+    
+    const statistics = {
+      totalVenues: society._count.venues,
+      totalCourts,
+      totalBookings: 0, // TODO: Calculate based on bookings table
+      activeMembers: society._count.members,
+    };
+
+    return {
+      ...society,
+      statistics
+    };
   }
 
-  /**
-   * Create a new society
-   */
   async createSociety(societyData: CreateSocietyInput) {
-    // Check if society with same name and location exists
     const existingSociety = await prisma.society.findFirst({
       where: {
         name: societyData.name,
@@ -160,11 +170,7 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Update society
-   */
   async updateSociety(societyId: number, updateData: UpdateSocietyInput) {
-    // Check if society exists
     const society = await prisma.society.findUnique({
       where: { id: societyId }
     });
@@ -187,11 +193,7 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Delete society (soft delete by setting isActive to false)
-   */
   async deleteSociety(societyId: number) {
-    // Check if society exists
     const society = await prisma.society.findUnique({
       where: { id: societyId }
     });
@@ -200,7 +202,6 @@ export class SocietyService {
       throw new Error('Society not found');
     }
 
-    // Check if society has active members
     const activeMembers = await prisma.societyMember.count({
       where: {
         societyId,
@@ -209,24 +210,64 @@ export class SocietyService {
     });
 
     if (activeMembers > 0) {
-      // Soft delete - deactivate society
       return prisma.society.update({
         where: { id: societyId },
         data: { isActive: false }
       });
     } else {
-      // Hard delete if no active members
       return prisma.society.delete({
         where: { id: societyId }
       });
     }
   }
 
-  /**
-   * Get society members
-   */
+  async toggleSocietyStatus(societyId: number) {
+    const society = await prisma.society.findUnique({
+      where: { id: societyId }
+    });
+    
+    if (!society) {
+      throw new Error('Society not found');
+    }
+
+    return prisma.society.update({
+      where: { id: societyId },
+      data: { isActive: !society.isActive },
+      include: {
+        _count: {
+          select: {
+            members: true,
+            venues: true
+          }
+        }
+      }
+    });
+  }
+
+  async getSocietyStatistics(societyId?: number) {
+    if (societyId) {
+      const society = await this.getSocietyById(societyId);
+      return society.statistics;
+    } else {
+      const totalSocieties = await prisma.society.count();
+      const activeSocieties = await prisma.society.count({ 
+        where: { isActive: true } 
+      });
+      const inactiveSocieties = totalSocieties - activeSocieties;
+      const totalVenues = await prisma.venue.count({
+        where: { isActive: true }
+      });
+
+      return {
+        totalSocieties,
+        activeSocieties,
+        inactiveSocieties,
+        totalVenues,
+      };
+    }
+  }
+
   async getSocietyMembers(societyId: number, includeInactive = false) {
-    // Check if society exists
     const society = await prisma.society.findUnique({
       where: { id: societyId }
     });
@@ -260,11 +301,7 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Add member to society
-   */
   async addMemberToSociety(societyId: number, userId: number) {
-    // Check if society exists
     const society = await prisma.society.findUnique({
       where: { id: societyId }
     });
@@ -273,7 +310,6 @@ export class SocietyService {
       throw new Error('Society not found');
     }
 
-    // Check if user exists
     const user = await prisma.user.findUnique({
       where: { id: userId }
     });
@@ -282,7 +318,6 @@ export class SocietyService {
       throw new Error('User not found');
     }
 
-    // Check if membership already exists
     const existingMembership = await prisma.societyMember.findUnique({
       where: {
         userId_societyId: {
@@ -296,7 +331,6 @@ export class SocietyService {
       if (existingMembership.isActive) {
         throw new Error('User is already a member of this society');
       } else {
-        // Reactivate membership
         return prisma.societyMember.update({
           where: {
             userId_societyId: {
@@ -324,7 +358,6 @@ export class SocietyService {
       }
     }
 
-    // Create new membership
     return prisma.societyMember.create({
       data: {
         userId,
@@ -348,11 +381,7 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Remove member from society
-   */
   async removeMemberFromSociety(societyId: number, userId: number) {
-    // Check if membership exists
     const membership = await prisma.societyMember.findUnique({
       where: {
         userId_societyId: {
@@ -366,7 +395,6 @@ export class SocietyService {
       throw new Error('Membership not found');
     }
 
-    // Soft delete - deactivate membership
     return prisma.societyMember.update({
       where: {
         userId_societyId: {
@@ -378,12 +406,7 @@ export class SocietyService {
     });
   }
 
-  /**
-   * Get pending membership requests (for future implementation)
-   */
   async getPendingMembershipRequests(societyId: number) {
-    // This would be used if you implement an approval system
-    // For now, return empty array as memberships are auto-approved
     return [];
   }
 }

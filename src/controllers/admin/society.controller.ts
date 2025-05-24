@@ -165,6 +165,80 @@ export class AdminSocietyController {
       );
     }
   }
+
+
+  /**
+ * Get society by ID (admin view)
+ * @route GET /api/admin/societies/:id
+ */
+async getSocietyById(req: Request, res: Response): Promise<void> {
+  try {
+    const societyId = Number(req.params.id);
+    
+    if (isNaN(societyId)) {
+      errorResponse(res, 'Invalid society ID', 400);
+      return;
+    }
+
+    const society = await societyService.getSocietyById(societyId);
+    
+    if (!society) {
+      errorResponse(res, 'Society not found', 404);
+      return;
+    }
+
+    successResponse(res, society, 'Society retrieved successfully');
+  } catch (error: any) {
+    logger.error('Error getting society by ID:', error);
+    errorResponse(res, error.message || 'Error retrieving society', 500);
+  }
+}
+
+/**
+ * Get society statistics
+ * @route GET /api/admin/societies/:id/statistics
+ */
+async getSocietyStatistics(req: Request, res: Response): Promise<void> {
+  try {
+    const societyId = req.params.id ? Number(req.params.id) : undefined;
+    
+    if (societyId && isNaN(societyId)) {
+      errorResponse(res, 'Invalid society ID', 400);
+      return;
+    }
+
+    const statistics = await societyService.getSocietyStatistics(societyId);
+    successResponse(res, statistics, 'Statistics retrieved successfully');
+  } catch (error: any) {
+    logger.error('Error getting society statistics:', error);
+    errorResponse(res, error.message || 'Error retrieving statistics', 500);
+  }
+}
+
+/**
+ * Toggle society status
+ * @route PATCH /api/admin/societies/:id/toggle-status
+ */
+async toggleSocietyStatus(req: Request, res: Response): Promise<void> {
+  try {
+    const societyId = Number(req.params.id);
+    
+    if (isNaN(societyId)) {
+      errorResponse(res, 'Invalid society ID', 400);
+      return;
+    }
+
+    const society = await societyService.toggleSocietyStatus(societyId);
+    successResponse(res, society, 'Society status updated successfully');
+  } catch (error: any) {
+    logger.error('Error toggling society status:', error);
+    errorResponse(
+      res, 
+      error.message || 'Error updating society status', 
+      error.message.includes('not found') ? 404 : 400
+    );
+  }
+}
 }
 
 export default new AdminSocietyController();
