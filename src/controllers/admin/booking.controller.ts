@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient, BookingStatus, PaymentStatus } from '@prisma/client';
+import { PrismaClient, BookingStatus, PaymentStatus, SportType, Role } from '@prisma/client';
 import { successResponse, errorResponse } from '../../utils/response';
 import logger from '../../utils/logger';
+import bookingService from '../../services/booking.service';
 
 const prisma = new PrismaClient();
 
@@ -13,106 +14,125 @@ export class AdminBookingController {
    * Get all bookings with pagination and filters
    * @route GET /api/admin/bookings
    */
-  async getAllBookings(req: Request, res: Response): Promise<void> {
-    try {
-      const page = Number(req.query.page) || 1;
-      const limit = Number(req.query.limit) || 10;
-      const status = req.query.status as BookingStatus | undefined;
-      const paymentStatus = req.query.paymentStatus as PaymentStatus | undefined;
-      const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
-      const userId = req.query.userId ? Number(req.query.userId) : undefined;
-      const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
-      const toDate = req.query.toDate ? new Date(req.query.toDate as string) : undefined;
+async getAllBookings(req: Request, res: Response): Promise<void> {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+    const status = req.query.status as BookingStatus | undefined;
+    const paymentStatus = req.query.paymentStatus as PaymentStatus | undefined;
+    const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    
+    // Fix date parsing
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
 
-      // Build filter conditions
-      const where: any = {};
-
-      if (status) {
-        where.status = status;
+    if (req.query.fromDate) {
+      const dateStr = req.query.fromDate as string;
+      fromDate = new Date(dateStr + 'T00:00:00.000Z');
+      if (isNaN(fromDate.getTime())) {
+        errorResponse(res, 'Invalid fromDate format. Use YYYY-MM-DD', 400);
+        return;
       }
+    }
 
-      if (paymentStatus) {
-        where.paymentStatus = paymentStatus;
+    if (req.query.toDate) {
+      const dateStr = req.query.toDate as string;
+      toDate = new Date(dateStr + 'T23:59:59.999Z');
+      if (isNaN(toDate.getTime())) {
+        errorResponse(res, 'Invalid toDate format. Use YYYY-MM-DD', 400);
+        return;
       }
+    }
 
-      if (venueId) {
-        where.court = {
-          venueId
-        };
-      }
+    // Build filter conditions
+    const where: any = {};
 
-      if (userId) {
-        where.userId = userId;
-      }
+    if (status) {
+      where.status = status;
+    }
 
-      if (fromDate || toDate) {
-        where.bookingDate = {};
-        if (fromDate) where.bookingDate.gte = fromDate;
-        if (toDate) where.bookingDate.lte = toDate;
-      }
+    if (paymentStatus) {
+      where.paymentStatus = paymentStatus;
+    }
 
-      // Calculate pagination
-      const skip = (page - 1) * limit;
+    if (venueId) {
+      where.court = {
+        venueId
+      };
+    }
 
-      const [bookings, totalBookings] = await Promise.all([
-        prisma.booking.findMany({
-          where,
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true
-              }
-            },
-            court: {
-              include: {
-                venue: {
-                  select: {
-                    id: true,
-                    name: true,
-                    location: true
-                  }
+    if (userId) {
+      where.userId = userId;
+    }
+
+    if (fromDate || toDate) {
+      where.bookingDate = {};
+      if (fromDate) where.bookingDate.gte = fromDate;
+      if (toDate) where.bookingDate.lte = toDate;
+    }
+
+    // Rest of your existing code...
+    const skip = (page - 1) * limit;
+
+    const [bookings, totalBookings] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true
+            }
+          },
+          court: {
+            include: {
+              venue: {
+                select: {
+                  id: true,
+                  name: true,
+                  location: true
                 }
               }
-            },
-            timeSlot: true,
-            addOns: true,
-            payment: true
+            }
           },
-          orderBy: {
-            createdAt: 'desc'
-          },
-          skip,
-          take: limit
-        }),
-        prisma.booking.count({ where })
-      ]);
-
-      const totalPages = Math.ceil(totalBookings / limit);
-
-      successResponse(
-        res,
-        {
-          bookings,
-          pagination: {
-            page,
-            limit,
-            totalBookings,
-            totalPages,
-            hasNext: page < totalPages,
-            hasPrevious: page > 1
-          }
+          timeSlot: true,
+          addOns: true,
+          payment: true
         },
-        'Bookings retrieved successfully'
-      );
-    } catch (error: any) {
-      logger.error('Error getting bookings (admin):', error);
-      errorResponse(res, error.message || 'Error retrieving bookings', 500);
-    }
-  }
+        orderBy: {
+          createdAt: 'desc'
+        },
+        skip,
+        take: limit
+      }),
+      prisma.booking.count({ where })
+    ]);
 
+    const totalPages = Math.ceil(totalBookings / limit);
+
+    successResponse(
+      res,
+      {
+        bookings,
+        pagination: {
+          page,
+          limit,
+          totalBookings,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrevious: page > 1
+        }
+      },
+      'Bookings retrieved successfully'
+    );
+  } catch (error: any) {
+    logger.error('Error getting bookings (admin):', error);
+    errorResponse(res, error.message || 'Error retrieving bookings', 500);
+  }
+}
   /**
    * Get booking details by ID
    * @route GET /api/admin/bookings/:id
@@ -185,6 +205,12 @@ export class AdminBookingController {
 
       const { status } = req.body;
 
+      // Validate status
+      if (!Object.values(BookingStatus).includes(status)) {
+        errorResponse(res, 'Invalid booking status', 400);
+        return;
+      }
+
       // Check if booking exists
       const booking = await prisma.booking.findUnique({
         where: { id: bookingId }
@@ -243,6 +269,12 @@ export class AdminBookingController {
       }
 
       const { paymentStatus } = req.body;
+
+      // Validate payment status
+      if (!Object.values(PaymentStatus).includes(paymentStatus)) {
+        errorResponse(res, 'Invalid payment status', 400);
+        return;
+      }
 
       // Check if booking exists
       const booking = await prisma.booking.findUnique({
@@ -475,6 +507,311 @@ export class AdminBookingController {
     } catch (error: any) {
       logger.error('Error getting booking statistics:', error);
       errorResponse(res, error.message || 'Error retrieving booking statistics', 500);
+    }
+  }
+
+  /**
+   * Check bulk availability
+   * @route POST /api/bookings/bulk-availability
+   */
+  async checkBulkAvailability(req: Request, res: Response): Promise<void> {
+    try {
+      const {
+        sportType,
+        venueId,
+        courts,
+        fromDate,
+        toDate,
+        days,
+        timeSlots
+      } = req.body;
+
+      // Validate required fields
+      if (!sportType || !fromDate || !toDate || !days || !timeSlots) {
+        errorResponse(res, 'Missing required fields: sportType, fromDate, toDate, days, timeSlots', 400);
+        return;
+      }
+
+      if (!Array.isArray(days) || days.length === 0) {
+        errorResponse(res, 'Days must be a non-empty array', 400);
+        return;
+      }
+
+      if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
+        errorResponse(res, 'Time slots must be a non-empty array', 400);
+        return;
+      }
+
+      // Validate sport type
+      if (!Object.values(SportType).includes(sportType)) {
+        errorResponse(res, 'Invalid sport type', 400);
+        return;
+      }
+
+      // Validate dates
+      const parsedFromDate = new Date(fromDate);
+      const parsedToDate = new Date(toDate);
+      
+      if (isNaN(parsedFromDate.getTime()) || isNaN(parsedToDate.getTime())) {
+        errorResponse(res, 'Invalid date format. Use YYYY-MM-DD', 400);
+        return;
+      }
+
+      if (parsedFromDate > parsedToDate) {
+        errorResponse(res, 'From date must be before or equal to the to date', 400);
+        return;
+      }
+
+      // Validate days (0-6 for Sunday-Saturday)
+      const invalidDays = days.filter((day: any) => typeof day !== 'number' || day < 0 || day > 6);
+      if (invalidDays.length > 0) {
+        errorResponse(res, 'Days must be integers between 0 (Sunday) and 6 (Saturday)', 400);
+        return;
+      }
+
+      // Validate time slots format
+      for (const slot of timeSlots) {
+        if (!slot.startTime || !slot.endTime) {
+          errorResponse(res, 'Each time slot must have startTime and endTime', 400);
+          return;
+        }
+        
+        // Check time format (HH:MM)
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(slot.startTime) || !timeRegex.test(slot.endTime)) {
+          errorResponse(res, 'Time must be in HH:MM format', 400);
+          return;
+        }
+
+        // Check if start time is before end time
+        if (slot.startTime >= slot.endTime) {
+          errorResponse(res, `Start time (${slot.startTime}) must be before end time (${slot.endTime})`, 400);
+          return;
+        }
+      }
+
+      const result = await bookingService.checkBulkAvailability({
+        sportType,
+        venueId: venueId ? Number(venueId) : undefined,
+        courts: courts ? courts.map((id: any) => Number(id)) : undefined,
+        fromDate,
+        toDate,
+        days,
+        timeSlots
+      });
+
+      successResponse(res, result, 'Bulk availability check completed');
+    } catch (error: any) {
+      logger.error('Error in bulk availability check:', error);
+      errorResponse(res, error.message, 400);
+    }
+  }
+
+/**
+ * Create booking (admin)
+ * @route POST /api/admin/bookings
+ */
+/**
+ * Create booking (admin)
+ * @route POST /api/admin/bookings
+ */
+async createBooking(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      errorResponse(res, 'Unauthorized', 401);
+      return;
+    }
+
+    const { courtId, timeSlotId, bookingDate, userId, addOns } = req.body;
+
+    // Validate required fields
+    if (!courtId || !timeSlotId || !bookingDate) {
+      errorResponse(res, 'Missing required fields: courtId, timeSlotId, bookingDate', 400);
+      return;
+    }
+
+    // Get a default user if none provided (you'll need to adjust this logic)
+    let targetUserId = userId;
+    
+    if (!targetUserId) {
+      // Option 1: Use the admin's ID
+      targetUserId = req.user.userId;
+      
+      // Option 2: Get a default user from database
+      // const defaultUser = await prisma.user.findFirst({ where: { role: 'USER' } });
+      // targetUserId = defaultUser?.id;
+      
+      if (!targetUserId) {
+        errorResponse(res, 'User ID is required', 400);
+        return;
+      }
+    }
+
+    const bookingData = {
+      courtId: Number(courtId),
+      timeSlotId: Number(timeSlotId),
+      bookingDate: new Date(bookingDate),
+      addOns: addOns || []
+    };
+
+    console.log('Creating booking with:', { targetUserId, bookingData });
+
+    const booking = await bookingService.createBooking(targetUserId, bookingData);
+
+    successResponse(res, booking, 'Booking created successfully', 201);
+  } catch (error: any) {
+    logger.error('Error creating booking (admin):', error);
+    errorResponse(res, error.message || 'Error creating booking', 400);
+  }
+}
+
+  /**
+   * Create bulk booking (Admin only)
+   * @route POST /api/admin/bookings/bulk
+   */
+  async createBulkBooking(req: Request, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        errorResponse(res, 'Unauthorized', 401);
+        return;
+      }
+
+      // Check if user has admin privileges
+      if (req.user.role !== Role.ADMIN && req.user.role !== Role.SUPERADMIN && req.user.role !== Role.VENUE_MANAGER) {
+        errorResponse(res, 'You are not authorized to create bulk bookings', 403);
+        return;
+      }
+
+      const {
+        sportType,
+        venueId,
+        courts,
+        fromDate,
+        toDate,
+        days,
+        timeSlots,
+        ignoreUnavailable,
+        userId
+      } = req.body;
+
+      // Validate required fields
+      if (!sportType || !fromDate || !toDate || !days || !timeSlots) {
+        errorResponse(res, 'Missing required fields: sportType, fromDate, toDate, days, timeSlots', 400);
+        return;
+      }
+
+      if (!Array.isArray(days) || days.length === 0) {
+        errorResponse(res, 'Days must be a non-empty array', 400);
+        return;
+      }
+
+      if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
+        errorResponse(res, 'Time slots must be a non-empty array', 400);
+        return;
+      }
+
+      // Validate sport type
+      if (!Object.values(SportType).includes(sportType)) {
+        errorResponse(res, 'Invalid sport type', 400);
+        return;
+      }
+
+      // Validate dates
+      const parsedFromDate = new Date(fromDate);
+      const parsedToDate = new Date(toDate);
+      
+      if (isNaN(parsedFromDate.getTime()) || isNaN(parsedToDate.getTime())) {
+        errorResponse(res, 'Invalid date format. Use YYYY-MM-DD', 400);
+        return;
+      }
+
+      if (parsedFromDate > parsedToDate) {
+        errorResponse(res, 'From date must be before or equal to the to date', 400);
+        return;
+      }
+
+      // Validate days (0-6 for Sunday-Saturday)
+      const invalidDays = days.filter((day: any) => typeof day !== 'number' || day < 0 || day > 6);
+      if (invalidDays.length > 0) {
+        errorResponse(res, 'Days must be integers between 0 (Sunday) and 6 (Saturday)', 400);
+        return;
+      }
+
+      // Validate time slots format
+      for (const slot of timeSlots) {
+        if (!slot.startTime || !slot.endTime) {
+          errorResponse(res, 'Each time slot must have startTime and endTime', 400);
+          return;
+        }
+        
+        // Check time format (HH:MM)
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(slot.startTime) || !timeRegex.test(slot.endTime)) {
+          errorResponse(res, 'Time must be in HH:MM format', 400);
+          return;
+        }
+
+        // Check if start time is before end time
+        if (slot.startTime >= slot.endTime) {
+          errorResponse(res, `Start time (${slot.startTime}) must be before end time (${slot.endTime})`, 400);
+          return;
+        }
+      }
+
+      // Validate courts if provided
+      if (courts && Array.isArray(courts)) {
+        const invalidCourts = courts.filter((courtId: any) => !Number.isInteger(Number(courtId)) || Number(courtId) <= 0);
+        if (invalidCourts.length > 0) {
+          errorResponse(res, 'All court IDs must be positive integers', 400);
+          return;
+        }
+      }
+
+      // Validate venueId if provided
+      if (venueId && (!Number.isInteger(Number(venueId)) || Number(venueId) <= 0)) {
+        errorResponse(res, 'Venue ID must be a positive integer', 400);
+        return;
+      }
+
+      // Validate userId if provided
+      if (userId && (!Number.isInteger(Number(userId)) || Number(userId) <= 0)) {
+        errorResponse(res, 'User ID must be a positive integer', 400);
+        return;
+      }
+
+      // Use provided userId or current user's ID
+      const targetUserId = userId || req.user.userId;
+
+      // Validate date range (prevent too large ranges)
+      const daysDifference = Math.ceil((parsedToDate.getTime() - parsedFromDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDifference > 90) {
+        errorResponse(res, 'Date range cannot exceed 90 days', 400);
+        return;
+      }
+
+      // Estimate total bookings to prevent accidental large bulk operations
+      const estimatedBookings = daysDifference * days.length * timeSlots.length * (courts?.length || 10);
+      if (estimatedBookings > 1000) {
+        errorResponse(res, `This operation would create approximately ${estimatedBookings} bookings. Please reduce the scope or contact system administrator.`, 400);
+        return;
+      }
+
+      const result = await bookingService.createBulkBooking(targetUserId, {
+        sportType,
+        venueId: venueId ? Number(venueId) : undefined,
+        courts: courts ? courts.map((id: any) => Number(id)) : undefined,
+        fromDate,
+        toDate,
+        days,
+        timeSlots,
+        ignoreUnavailable: ignoreUnavailable || false,
+        userId: targetUserId
+      });
+
+      successResponse(res, result, result.message, 201);
+    } catch (error: any) {
+      logger.error('Error creating bulk booking:', error);
+      errorResponse(res, error.message, 400);
     }
   }
 }

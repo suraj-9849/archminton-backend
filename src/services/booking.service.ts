@@ -1,9 +1,14 @@
-import { PrismaClient, BookingStatus, PaymentStatus, PaymentMethod } from '@prisma/client';
-import logger from '../utils/logger';
+import {
+  PrismaClient,
+  BookingStatus,
+  PaymentStatus,
+  PaymentMethod,
+  SportType,
+} from "@prisma/client";
+import logger from "../utils/logger";
 
 const prisma = new PrismaClient();
 
-// Booking creation input interface
 interface CreateBookingInput {
   courtId: number;
   timeSlotId: number;
@@ -11,14 +16,12 @@ interface CreateBookingInput {
   addOns?: BookingAddOnInput[];
 }
 
-// Add-on input interface
 interface BookingAddOnInput {
   addOnType: string;
   quantity: number;
   price: number;
 }
 
-// Interface for payment creation
 interface CreatePaymentInput {
   bookingId: number;
   amount: number;
@@ -26,106 +29,112 @@ interface CreatePaymentInput {
   transactionId?: string;
 }
 
-/**
- * Service for booking-related operations
- */
+interface BulkAvailabilityInput {
+  sportType: SportType;
+  venueId?: number;
+  courts?: number[];
+  fromDate: string;
+  toDate: string;
+  days: number[];
+  timeSlots: Array<{ startTime: string; endTime: string }>;
+}
+
+interface BulkBookingInput {
+  sportType: SportType;
+  venueId?: number;
+  courts?: number[];
+  fromDate: string;
+  toDate: string;
+  days: number[];
+  timeSlots: Array<{ startTime: string; endTime: string }>;
+  ignoreUnavailable?: boolean;
+  userId?: number;
+}
+
 export class BookingService {
-  /**
-   * Create a new booking
-   */
   async createBooking(userId: number, bookingData: CreateBookingInput) {
-    // Check if court exists
     const court = await prisma.court.findUnique({
       where: {
         id: bookingData.courtId,
-        isActive: true
+        isActive: true,
       },
       include: {
         venue: {
           include: {
-            society: true
-          }
-        }
-      }
+            society: true,
+          },
+        },
+      },
     });
 
     if (!court) {
-      throw new Error('Court not found or inactive');
+      throw new Error("Court not found or inactive");
     }
 
-    // Check if time slot exists and belongs to the court
     const timeSlot = await prisma.timeSlot.findFirst({
       where: {
         id: bookingData.timeSlotId,
         courtId: bookingData.courtId,
-        isActive: true
-      }
+        isActive: true,
+      },
     });
 
     if (!timeSlot) {
-      throw new Error('Time slot not found or inactive');
+      throw new Error("Time slot not found or inactive");
     }
 
-    // Check if venue is private and user has access
-    if (court.venue.venueType === 'PRIVATE') {
-      // Check if user has society membership
+    if (court.venue.venueType === "PRIVATE") {
       if (court.venue.societyId) {
         const hasMembership = await prisma.societyMember.findUnique({
           where: {
             userId_societyId: {
               userId,
-              societyId: court.venue.societyId
-            }
-          }
+              societyId: court.venue.societyId,
+            },
+          },
         });
 
         if (!hasMembership || !hasMembership.isActive) {
-          // Check if user has direct venue access
           const hasVenueAccess = await prisma.venueUserAccess.findUnique({
             where: {
               venueId_userId: {
                 venueId: court.venue.id,
-                userId
-              }
-            }
+                userId,
+              },
+            },
           });
 
           if (!hasVenueAccess) {
-            throw new Error('You do not have access to this venue');
+            throw new Error("You do not have access to this venue");
           }
         }
       }
     }
 
-    // Check if the slot is already booked for the given date
     const existingBooking = await prisma.booking.findFirst({
       where: {
         courtId: bookingData.courtId,
         timeSlotId: bookingData.timeSlotId,
         bookingDate: bookingData.bookingDate,
         status: {
-          in: [BookingStatus.CONFIRMED, BookingStatus.PENDING]
-        }
-      }
+          in: [BookingStatus.CONFIRMED, BookingStatus.PENDING],
+        },
+      },
     });
 
     if (existingBooking) {
-      throw new Error('This time slot is already booked for the selected date');
+      throw new Error("This time slot is already booked for the selected date");
     }
 
-    // Calculate total amount
     let totalAmount = Number(court.pricePerHour);
 
-    // Add prices for add-ons
     if (bookingData.addOns && bookingData.addOns.length > 0) {
       for (const addOn of bookingData.addOns) {
         totalAmount += Number(addOn.price) * addOn.quantity;
       }
     }
 
-    // Create booking transaction
     const booking = await prisma.$transaction(async (tx) => {
-      // Create the booking
       const newBooking = await tx.booking.create({
         data: {
           userId,
@@ -137,10 +146,9 @@ export class BookingService {
           status: BookingStatus.PENDING,
           totalAmount,
           paymentStatus: PaymentStatus.PENDING,
-        }
+        },
       });
 
-      // Create add-ons if provided
       if (bookingData.addOns && bookingData.addOns.length > 0) {
         for (const addOn of bookingData.addOns) {
           await tx.bookingAddOn.create({
@@ -148,55 +156,480 @@ export class BookingService {
               bookingId: newBooking.id,
               addOnType: addOn.addOnType,
               quantity: addOn.quantity,
-              price: addOn.price
-            }
+              price: addOn.price,
+            },
           });
         }
       }
 
-      // Return booking with included related data
       return tx.booking.findUnique({
         where: { id: newBooking.id },
         include: {
           court: {
             include: {
-              venue: true
-            }
+              venue: true,
+            },
           },
           timeSlot: true,
-          addOns: true
-        }
+          addOns: true,
+        },
       });
     });
 
     return booking;
   }
 
-  /**
-   * Process payment for a booking
-   */
+  async checkBulkAvailability(params: BulkAvailabilityInput) {
+    try {
+      logger.info("Checking bulk availability:", params);
+
+      // Get target courts
+      let targetCourts = [];
+      if (params.courts && params.courts.length > 0) {
+        // Use specific courts
+        targetCourts = await prisma.court.findMany({
+          where: {
+            id: { in: params.courts },
+            sportType: params.sportType,
+            isActive: true,
+            ...(params.venueId && { venueId: params.venueId }),
+          },
+          include: {
+            venue: {
+              select: {
+                id: true,
+                name: true,
+                location: true,
+              },
+            },
+            timeSlots: {
+              where: { isActive: true },
+            },
+          },
+        });
+      } else {
+        // Get all courts matching criteria
+        targetCourts = await prisma.court.findMany({
+          where: {
+            sportType: params.sportType,
+            isActive: true,
+            ...(params.venueId && { venueId: params.venueId }),
+          },
+          include: {
+            venue: {
+              select: {
+                id: true,
+                name: true,
+                location: true,
+              },
+            },
+            timeSlots: {
+              where: { isActive: true },
+            },
+          },
+        });
+      }
+
+      if (targetCourts.length === 0) {
+        throw new Error("No courts found matching the criteria");
+      }
+
+      // Generate date range
+      const startDate = new Date(params.fromDate);
+      const endDate = new Date(params.toDate);
+      const dates: Date[] = [];
+
+      for (
+        let date = new Date(startDate);
+        date <= endDate;
+        date.setDate(date.getDate() + 1)
+      ) {
+        if (params.days.includes(date.getDay())) {
+          dates.push(new Date(date));
+        }
+      }
+
+      logger.info(`Generated ${dates.length} dates for availability check`);
+
+      // Get all existing bookings for the date range and courts
+      const existingBookings = await prisma.booking.findMany({
+        where: {
+          courtId: { in: targetCourts.map((c) => c.id) },
+          bookingDate: {
+            gte: startDate,
+            lte: endDate,
+          },
+          status: {
+            in: [BookingStatus.CONFIRMED, BookingStatus.PENDING],
+          },
+        },
+        select: {
+          courtId: true,
+          bookingDate: true,
+          startTime: true,
+          endTime: true,
+          timeSlotId: true,
+        },
+      });
+
+      // Create a map of booked slots for quick lookup
+      const bookedSlots = new Map<string, boolean>();
+      existingBookings.forEach((booking) => {
+        const key = `${booking.courtId}-${
+          booking.bookingDate.toISOString().split("T")[0]
+        }-${booking.startTime}-${booking.endTime}`;
+        bookedSlots.set(key, true);
+      });
+
+      // Generate availability results
+      const availability = [];
+
+      for (const court of targetCourts) {
+        for (const date of dates) {
+          for (const timeSlot of params.timeSlots) {
+            // Check if this court has a matching time slot for this day of week
+            const dayOfWeek = date.getDay();
+            const courtTimeSlot = court.timeSlots.find(
+              (ts) =>
+                ts.dayOfWeek === dayOfWeek &&
+                ts.startTime === timeSlot.startTime &&
+                ts.endTime === timeSlot.endTime
+            );
+
+            if (!courtTimeSlot) {
+              // Court doesn't have this time slot configured
+              availability.push({
+                id: `${date.toISOString().split("T")[0]}-${court.id}-${
+                  timeSlot.startTime
+                }-${timeSlot.endTime}`,
+                courtId: court.id,
+                courtName: court.name,
+                venueName: court.venue.name,
+                date: date.toISOString().split("T")[0],
+                startTime: timeSlot.startTime,
+                endTime: timeSlot.endTime,
+                available: false,
+                reason: "Time slot not configured for this day",
+                price: 0,
+              });
+              continue;
+            }
+
+            // Check if this slot is already booked
+            const bookingKey = `${court.id}-${
+              date.toISOString().split("T")[0]
+            }-${timeSlot.startTime}-${timeSlot.endTime}`;
+            const isBooked = bookedSlots.has(bookingKey);
+
+            // Calculate price (duration in hours * price per hour)
+            const startHour = parseInt(timeSlot.startTime.split(":")[0]);
+            const startMinute = parseInt(timeSlot.startTime.split(":")[1]);
+            const endHour = parseInt(timeSlot.endTime.split(":")[0]);
+            const endMinute = parseInt(timeSlot.endTime.split(":")[1]);
+            const durationHours =
+              endHour + endMinute / 60 - (startHour + startMinute / 60);
+            const price = Number(court.pricePerHour) * durationHours;
+
+            availability.push({
+              id: `${date.toISOString().split("T")[0]}-${court.id}-${
+                timeSlot.startTime
+              }-${timeSlot.endTime}`,
+              courtId: court.id,
+              courtName: court.name,
+              venueName: court.venue.name,
+              date: date.toISOString().split("T")[0],
+              startTime: timeSlot.startTime,
+              endTime: timeSlot.endTime,
+              available: !isBooked,
+              reason: isBooked ? "Already booked" : null,
+              price: price,
+            });
+          }
+        }
+      }
+
+      const summary = {
+        total: availability.length,
+        available: availability.filter((a) => a.available).length,
+        unavailable: availability.filter((a) => !a.available).length,
+      };
+
+      logger.info("Bulk availability check completed:", summary);
+
+      return {
+        success: true,
+        data: availability,
+        summary,
+      };
+    } catch (error: any) {
+      logger.error("Error in bulk availability check:", error);
+      throw new Error(`Bulk availability check failed: ${error.message}`);
+    }
+  }
+
+  async createBulkBooking(userId: number, params: BulkBookingInput) {
+    try {
+      logger.info("Creating bulk booking:", params);
+
+      const results = {
+        successful: 0,
+        failed: 0,
+        errors: [] as string[],
+        bookings: [] as any[],
+      };
+
+      // Get target courts
+      let targetCourts = [];
+      if (params.courts && params.courts.length > 0) {
+        targetCourts = await prisma.court.findMany({
+          where: {
+            id: { in: params.courts },
+            sportType: params.sportType,
+            isActive: true,
+            ...(params.venueId && { venueId: params.venueId }),
+          },
+          include: {
+            venue: {
+              include: {
+                society: true,
+              },
+            },
+            timeSlots: {
+              where: { isActive: true },
+            },
+          },
+        });
+      } else {
+        targetCourts = await prisma.court.findMany({
+          where: {
+            sportType: params.sportType,
+            isActive: true,
+            ...(params.venueId && { venueId: params.venueId }),
+          },
+          include: {
+            venue: {
+              include: {
+                society: true,
+              },
+            },
+            timeSlots: {
+              where: { isActive: true },
+            },
+          },
+        });
+      }
+
+      if (targetCourts.length === 0) {
+        throw new Error("No courts found matching the criteria");
+      }
+
+      // Generate date range
+      const startDate = new Date(params.fromDate);
+      const endDate = new Date(params.toDate);
+      const dates: Date[] = [];
+
+      for (
+        let date = new Date(startDate);
+        date <= endDate;
+        date.setDate(date.getDate() + 1)
+      ) {
+        if (params.days.includes(date.getDay())) {
+          dates.push(new Date(date));
+        }
+      }
+
+      logger.info(
+        `Attempting to create bookings for ${targetCourts.length} courts across ${dates.length} dates with ${params.timeSlots.length} time slots`
+      );
+
+      // Create bookings for each combination
+      for (const court of targetCourts) {
+        for (const date of dates) {
+          for (const timeSlot of params.timeSlots) {
+            try {
+              // Check if court has this time slot configured for this day
+              const dayOfWeek = date.getDay();
+              const courtTimeSlot = court.timeSlots.find(
+                (ts) =>
+                  ts.dayOfWeek === dayOfWeek &&
+                  ts.startTime === timeSlot.startTime &&
+                  ts.endTime === timeSlot.endTime
+              );
+
+              if (!courtTimeSlot) {
+                const error = `Time slot ${timeSlot.startTime}-${
+                  timeSlot.endTime
+                } not configured for ${court.name} on ${date.toDateString()}`;
+                results.errors.push(error);
+                results.failed++;
+                if (!params.ignoreUnavailable) {
+                  logger.warn(error);
+                }
+                continue;
+              }
+
+              // Check venue access
+              if (court.venue.venueType === "PRIVATE") {
+                if (court.venue.societyId) {
+                  const hasMembership = await prisma.societyMember.findUnique({
+                    where: {
+                      userId_societyId: {
+                        userId,
+                        societyId: court.venue.societyId,
+                      },
+                    },
+                  });
+
+                  if (!hasMembership || !hasMembership.isActive) {
+                    const hasVenueAccess =
+                      await prisma.venueUserAccess.findUnique({
+                        where: {
+                          venueId_userId: {
+                            venueId: court.venue.id,
+                            userId,
+                          },
+                        },
+                      });
+
+                    if (!hasVenueAccess) {
+                      const error = `No access to private venue ${court.venue.name}`;
+                      results.errors.push(error);
+                      results.failed++;
+                      if (!params.ignoreUnavailable) {
+                        throw new Error(error);
+                      }
+                      continue;
+                    }
+                  }
+                }
+              }
+
+              // Check if slot is already booked
+              const existingBooking = await prisma.booking.findFirst({
+                where: {
+                  courtId: court.id,
+                  timeSlotId: courtTimeSlot.id,
+                  bookingDate: date,
+                  status: {
+                    in: [BookingStatus.CONFIRMED, BookingStatus.PENDING],
+                  },
+                },
+              });
+
+              if (existingBooking) {
+                const error = `${
+                  court.name
+                } already booked on ${date.toDateString()} at ${
+                  timeSlot.startTime
+                }-${timeSlot.endTime}`;
+                results.errors.push(error);
+                results.failed++;
+                if (!params.ignoreUnavailable) {
+                  logger.warn(error);
+                }
+                continue;
+              }
+
+              // Calculate total amount
+              const startHour = parseInt(timeSlot.startTime.split(":")[0]);
+              const startMinute = parseInt(timeSlot.startTime.split(":")[1]);
+              const endHour = parseInt(timeSlot.endTime.split(":")[0]);
+              const endMinute = parseInt(timeSlot.endTime.split(":")[1]);
+              const durationHours =
+                endHour + endMinute / 60 - (startHour + startMinute / 60);
+              const totalAmount = Number(court.pricePerHour) * durationHours;
+
+              // Create the booking
+              const booking = await prisma.booking.create({
+                data: {
+                  userId,
+                  courtId: court.id,
+                  timeSlotId: courtTimeSlot.id,
+                  bookingDate: date,
+                  startTime: timeSlot.startTime,
+                  endTime: timeSlot.endTime,
+                  status: BookingStatus.CONFIRMED, // Auto-confirm bulk bookings
+                  totalAmount,
+                  paymentStatus: PaymentStatus.PENDING,
+                },
+                include: {
+                  court: {
+                    include: {
+                      venue: true,
+                    },
+                  },
+                  timeSlot: true,
+                },
+              });
+
+              results.successful++;
+              results.bookings.push(booking);
+
+              logger.info(
+                `Successfully created booking for ${
+                  court.name
+                } on ${date.toDateString()} at ${timeSlot.startTime}-${
+                  timeSlot.endTime
+                }`
+              );
+            } catch (error: any) {
+              const errorMsg = `Failed to book ${
+                court.name
+              } on ${date.toDateString()} at ${timeSlot.startTime}-${
+                timeSlot.endTime
+              }: ${error.message}`;
+              results.errors.push(errorMsg);
+              results.failed++;
+
+              logger.warn(errorMsg);
+
+              if (!params.ignoreUnavailable && results.failed > 10) {
+                throw new Error(
+                  `Too many booking failures. Stopping bulk creation. Last error: ${error.message}`
+                );
+              }
+            }
+          }
+        }
+      }
+
+      logger.info("Bulk booking completed:", {
+        successful: results.successful,
+        failed: results.failed,
+        totalErrors: results.errors.length,
+      });
+
+      return {
+        success: true,
+        message: `Created ${results.successful} bookings successfully${
+          results.failed > 0 ? `, ${results.failed} failed` : ""
+        }`,
+        data: results,
+      };
+    } catch (error: any) {
+      logger.error("Error in bulk booking creation:", error);
+      throw new Error(`Bulk booking failed: ${error.message}`);
+    }
+  }
+
   async processPayment(bookingId: number, paymentData: CreatePaymentInput) {
-    // Find the booking
     const booking = await prisma.booking.findUnique({
-      where: { id: bookingId }
+      where: { id: bookingId },
     });
 
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new Error("Booking not found");
     }
 
-    // Check if payment already exists
     const existingPayment = await prisma.payment.findUnique({
-      where: { bookingId }
+      where: { bookingId },
     });
 
     if (existingPayment && existingPayment.status === PaymentStatus.PAID) {
-      throw new Error('Payment has already been processed for this booking');
+      throw new Error("Payment has already been processed for this booking");
     }
 
-    // Process the payment
     const payment = await prisma.$transaction(async (tx) => {
-      // Create or update payment
       let payment;
       if (existingPayment) {
         payment = await tx.payment.update({
@@ -205,8 +638,8 @@ export class BookingService {
             amount: paymentData.amount,
             paymentMethod: paymentData.paymentMethod,
             transactionId: paymentData.transactionId,
-            status: PaymentStatus.PAID
-          }
+            status: PaymentStatus.PAID,
+          },
         });
       } else {
         payment = await tx.payment.create({
@@ -215,185 +648,169 @@ export class BookingService {
             amount: paymentData.amount,
             paymentMethod: paymentData.paymentMethod,
             transactionId: paymentData.transactionId,
-            status: PaymentStatus.PAID
-          }
+            status: PaymentStatus.PAID,
+          },
         });
       }
 
-      // Update booking status
       await tx.booking.update({
         where: { id: bookingId },
         data: {
           status: BookingStatus.CONFIRMED,
-          paymentStatus: PaymentStatus.PAID
-        }
+          paymentStatus: PaymentStatus.PAID,
+        },
       });
 
       return payment;
     });
 
-    // Get updated booking with all related data
     const updatedBooking = await prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
         court: {
           include: {
-            venue: true
-          }
+            venue: true,
+          },
         },
         timeSlot: true,
         addOns: true,
-        payment: true
-      }
+        payment: true,
+      },
     });
 
     return {
       booking: updatedBooking,
-      payment
+      payment,
     };
   }
 
-  /**
-   * Get booking availability for a court on a specific date
-   */
   async getCourtAvailability(courtId: number, date: Date) {
-    // Check if court exists
     const court = await prisma.court.findUnique({
       where: {
         id: courtId,
-        isActive: true
+        isActive: true,
       },
       include: {
         timeSlots: {
-          where: { isActive: true }
-        }
-      }
+          where: { isActive: true },
+        },
+      },
     });
 
     if (!court) {
-      throw new Error('Court not found or inactive');
+      throw new Error("Court not found or inactive");
     }
 
-    // Set date to start of day
     const bookingDate = new Date(date);
     bookingDate.setHours(0, 0, 0, 0);
-    
+
     const nextDay = new Date(bookingDate);
     nextDay.setDate(nextDay.getDate() + 1);
 
-    // Get all bookings for this court on the specified date
     const bookings = await prisma.booking.findMany({
       where: {
         courtId,
         bookingDate: {
           gte: bookingDate,
-          lt: nextDay
+          lt: nextDay,
         },
         status: {
-          in: [BookingStatus.CONFIRMED, BookingStatus.PENDING]
-        }
+          in: [BookingStatus.CONFIRMED, BookingStatus.PENDING],
+        },
       },
       select: {
-        timeSlotId: true
-      }
+        timeSlotId: true,
+      },
     });
 
-    // Create a set of booked time slot IDs
-    const bookedTimeSlotIds = new Set(bookings.map(booking => booking.timeSlotId));
+    const bookedTimeSlotIds = new Set(
+      bookings.map((booking) => booking.timeSlotId)
+    );
 
-    // Return time slots with availability information
-    const availabilityInfo = court.timeSlots.map(slot => ({
+    const availabilityInfo = court.timeSlots.map((slot) => ({
       ...slot,
-      isAvailable: !bookedTimeSlotIds.has(slot.id)
+      isAvailable: !bookedTimeSlotIds.has(slot.id),
     }));
 
     return {
       court,
       date: bookingDate,
-      availability: availabilityInfo
+      availability: availabilityInfo,
     };
   }
 
-  /**
-   * Cancel a booking
-   */
-  async cancelBooking(bookingId: number, userId: number, isAdmin: boolean = false) {
-    // Find the booking
+  async cancelBooking(
+    bookingId: number,
+    userId: number,
+    isAdmin: boolean = false
+  ) {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
-        payment: true
-      }
+        payment: true,
+      },
     });
 
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new Error("Booking not found");
     }
 
-    // Check if user is authorized to cancel
     if (!isAdmin && booking.userId !== userId) {
-      throw new Error('You are not authorized to cancel this booking');
+      throw new Error("You are not authorized to cancel this booking");
     }
 
-    // Check if booking can be cancelled
     if (booking.status === BookingStatus.CANCELLED) {
-      throw new Error('Booking is already cancelled');
+      throw new Error("Booking is already cancelled");
     }
 
     if (booking.status === BookingStatus.COMPLETED) {
-      throw new Error('Cannot cancel a completed booking');
+      throw new Error("Cannot cancel a completed booking");
     }
 
-    // Cancel the booking
     const updatedBooking = await prisma.booking.update({
       where: { id: bookingId },
       data: {
-        status: BookingStatus.CANCELLED
+        status: BookingStatus.CANCELLED,
       },
       include: {
         court: {
           include: {
-            venue: true
-          }
+            venue: true,
+          },
         },
         timeSlot: true,
         addOns: true,
-        payment: true
-      }
+        payment: true,
+      },
     });
 
-    // Process refund if payment was made
     if (booking.payment && booking.payment.status === PaymentStatus.PAID) {
       await prisma.payment.update({
         where: { id: booking.payment.id },
         data: {
-          status: PaymentStatus.REFUNDED
-        }
+          status: PaymentStatus.REFUNDED,
+        },
       });
 
-      // Update booking payment status
       await prisma.booking.update({
         where: { id: bookingId },
         data: {
-          paymentStatus: PaymentStatus.REFUNDED
-        }
+          paymentStatus: PaymentStatus.REFUNDED,
+        },
       });
     }
 
     return updatedBooking;
   }
 
-  /**
-   * Get booking by ID
-   */
   async getBookingById(bookingId: number) {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
         court: {
           include: {
-            venue: true
-          }
+            venue: true,
+          },
         },
         timeSlot: true,
         addOns: true,
@@ -403,41 +820,36 @@ export class BookingService {
             id: true,
             name: true,
             email: true,
-            phone: true
-          }
-        }
-      }
+            phone: true,
+          },
+        },
+      },
     });
 
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new Error("Booking not found");
     }
 
     return booking;
   }
 
-  /**
-   * Update booking status
-   */
   async updateBookingStatus(bookingId: number, status: BookingStatus) {
-    // Find the booking
     const booking = await prisma.booking.findUnique({
-      where: { id: bookingId }
+      where: { id: bookingId },
     });
 
     if (!booking) {
-      throw new Error('Booking not found');
+      throw new Error("Booking not found");
     }
 
-    // Update booking status
     const updatedBooking = await prisma.booking.update({
       where: { id: bookingId },
       data: { status },
       include: {
         court: {
           include: {
-            venue: true
-          }
+            venue: true,
+          },
         },
         timeSlot: true,
         addOns: true,
@@ -447,10 +859,10 @@ export class BookingService {
             id: true,
             name: true,
             email: true,
-            phone: true
-          }
-        }
-      }
+            phone: true,
+          },
+        },
+      },
     });
 
     return updatedBooking;
