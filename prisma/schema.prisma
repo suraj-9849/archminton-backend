@@ -66,7 +66,7 @@ model SocietyMember {
 }
 
 model Venue {
-  id              Int               @id @default(autoincrement())
+  id              Int                 @id @default(autoincrement())
   name            String
   description     String?
   location        String
@@ -74,15 +74,16 @@ model Venue {
   longitude       Float?
   contactPhone    String?
   contactEmail    String?
-  isActive        Boolean           @default(true)
-  venueType       VenueType         @default(PUBLIC)
+  isActive        Boolean             @default(true)
+  venueType       VenueType           @default(PUBLIC)
   societyId       Int?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  society         Society?          @relation(fields: [societyId], references: [id])
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  society         Society?            @relation(fields: [societyId], references: [id])
   courts          Court[]
   images          VenueImage[]
   venueUserAccess VenueUserAccess[]
+  sportsConfig    VenueSportsConfig[]
 
   User User[] @relation("VenueUserAccess")
 }
@@ -90,6 +91,19 @@ model Venue {
 enum VenueType {
   PUBLIC
   PRIVATE
+}
+
+model VenueSportsConfig {
+  id        Int       @id @default(autoincrement())
+  venueId   Int
+  sportType SportType
+  maxCourts Int       @default(1)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  venue     Venue     @relation(fields: [venueId], references: [id])
+
+  @@unique([venueId, sportType])
 }
 
 model VenueUserAccess {
@@ -134,6 +148,9 @@ enum SportType {
   SWIMMING
   BASKETBALL
   VOLLEYBALL
+  ARCHERY
+  TABLE_TENNIS
+  SQUASH
   OTHER
 }
 

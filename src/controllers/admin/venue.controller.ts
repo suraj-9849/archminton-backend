@@ -62,6 +62,14 @@ export class AdminVenueController {
                 isActive: true,
               },
             },
+            sportsConfig: {
+              select: {
+                id: true,
+                sportType: true,
+                maxCourts: true,
+                isActive: true,
+              },
+            },
             images: {
               where: { isDefault: true },
               take: 1,
@@ -157,6 +165,7 @@ export class AdminVenueController {
               name: true,
             },
           },
+          sportsConfig: true,
         },
       });
 
@@ -245,6 +254,14 @@ export class AdminVenueController {
               id: true,
               name: true,
               sportType: true,
+              isActive: true,
+            },
+          },
+          sportsConfig: {
+            select: {
+              id: true,
+              sportType: true,
+              maxCourts: true,
               isActive: true,
             },
           },
@@ -340,12 +357,29 @@ export class AdminVenueController {
             include: {
               timeSlots: {
                 where: { isActive: true },
+                orderBy: [
+                  { dayOfWeek: "asc" },
+                  { startTime: "asc" },
+                ],
               },
               _count: {
                 select: {
                   bookings: true,
                 },
               },
+            },
+          },
+          sportsConfig: {
+            select: {
+              id: true,
+              sportType: true,
+              maxCourts: true,
+              isActive: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+            orderBy: {
+              createdAt: "asc",
             },
           },
           images: true,
@@ -368,7 +402,20 @@ export class AdminVenueController {
         return;
       }
 
-      successResponse(res, venue, "Venue details retrieved successfully");
+      // Add court count for each sport configuration
+      const venueWithCounts = {
+        ...venue,
+        sportsConfig: venue.sportsConfig.map((config) => ({
+          ...config,
+          _count: {
+            courts: venue.courts.filter(
+              (court) => court.sportType === config.sportType && court.isActive
+            ).length,
+          },
+        })),
+      };
+
+      successResponse(res, venueWithCounts, "Venue details retrieved successfully");
     } catch (error: any) {
       logger.error("Error getting venue details (admin):", error);
       errorResponse(

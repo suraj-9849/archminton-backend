@@ -18,6 +18,7 @@ import societyRoutes from './routes/society.routes';
 import courseRoutes from './routes/course.routes';
 
 // Import admin routes
+import reportRoutes from './routes/admin/report.routes';
 import adminDashboardRoutes from './routes/admin/dashboard.routes';
 import adminUserRoutes from './routes/admin/user.routes';
 import adminVenueRoutes from './routes/admin/venue.routes';
@@ -59,6 +60,7 @@ app.use('/api/admin/societies', adminSocietyRoutes);
 app.use('/api/admin/courts', adminCourtRoutes);
 app.use('/api/admin/bookings', adminBookingRoutes);
 app.use('/api/admin/courses', adminCourseRoutes);
+app.use('/api/admin/reports', reportRoutes);
 
 // Root route for API status
 app.get('/', (req: Request, res: Response) => {
