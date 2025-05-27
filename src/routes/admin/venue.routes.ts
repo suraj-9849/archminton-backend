@@ -8,6 +8,13 @@ import { VenueType, SportType } from "@prisma/client";
 
 const router = express.Router();
 
+router.get("/test", (req, res) => {
+  res.json({
+    message: "Admin venue routes working!",
+  });
+}
+);
+
 // All routes require authentication and admin access
 router.use(authenticate);
 router.use(adminOnly);
@@ -15,6 +22,7 @@ router.use(adminOnly);
 // ================ VENUE MANAGEMENT ROUTES ================
 
 // Get all venues
+
 const getVenuesValidation = [
   query("page")
     .optional()

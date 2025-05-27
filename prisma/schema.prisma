@@ -26,9 +26,8 @@ model User {
   societyMemberships SocietyMember[]
   bookings           Booking[]
   courseEnrollments  CourseEnrollment[]
-  venues             Venue[]            @relation("VenueUserAccess")
-
-  VenueUserAccess VenueUserAccess[]
+  submittedApprovals Approval[]         @relation("ApprovalRequester")
+  processedApprovals Approval[]         @relation("ApprovalProcessor")
 }
 
 enum Role {
@@ -50,47 +49,83 @@ model Society {
   updatedAt     DateTime        @updatedAt
   members       SocietyMember[]
   venues        Venue[]
+  approvals     Approval[] 
 }
 
 model SocietyMember {
-  id        Int      @id @default(autoincrement())
+  id        Int              @id @default(autoincrement())
   userId    Int
   societyId Int
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id])
-  society   Society  @relation(fields: [societyId], references: [id])
+  isActive  Boolean          @default(true)
+  status    MembershipStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id])
+  society   Society          @relation(fields: [societyId], references: [id])
 
   @@unique([userId, societyId])
 }
 
-model Venue {
-  id              Int                 @id @default(autoincrement())
-  name            String
-  description     String?
-  location        String
-  latitude        Float?
-  longitude       Float?
-  contactPhone    String?
-  contactEmail    String?
-  isActive        Boolean             @default(true)
-  venueType       VenueType           @default(PUBLIC)
-  societyId       Int?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  society         Society?            @relation(fields: [societyId], references: [id])
-  courts          Court[]
-  images          VenueImage[]
-  venueUserAccess VenueUserAccess[]
-  sportsConfig    VenueSportsConfig[]
+enum MembershipStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+  INACTIVE
+}
 
-  User User[] @relation("VenueUserAccess")
+model Venue {
+  id           Int                 @id @default(autoincrement())
+  name         String
+  description  String?
+  location     String
+  latitude     Float?
+  longitude    Float?
+  contactPhone String?
+  contactEmail String?
+  isActive     Boolean             @default(true)
+  venueType    VenueType           @default(PUBLIC)
+  societyId    Int?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  society      Society?            @relation(fields: [societyId], references: [id])
+  courts       Court[]
+  images       VenueImage[]
+  sportsConfig VenueSportsConfig[]
 }
 
 enum VenueType {
   PUBLIC
   PRIVATE
+}
+
+model Approval {
+  id            Int            @id @default(autoincrement())
+  type          ApprovalType   @default(SOCIETY_MEMBERSHIP)
+  status        ApprovalStatus @default(PENDING)
+  requesterId   Int
+  processedById Int?
+  societyId     Int
+
+  comments          String?
+  processedAt       DateTime?
+  processorComments String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  requester         User      @relation("ApprovalRequester", fields: [requesterId], references: [id])
+  processor         User?     @relation("ApprovalProcessor", fields: [processedById], references: [id])
+  society           Society   @relation(fields: [societyId], references: [id])
+}
+
+enum ApprovalType {
+  SOCIETY_MEMBERSHIP
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 model VenueSportsConfig {
@@ -104,16 +139,6 @@ model VenueSportsConfig {
   venue     Venue     @relation(fields: [venueId], references: [id])
 
   @@unique([venueId, sportType])
-}
-
-model VenueUserAccess {
-  id      Int   @id @default(autoincrement())
-  venueId Int
-  userId  Int
-  venue   Venue @relation(fields: [venueId], references: [id])
-  user    User  @relation(fields: [userId], references: [id])
-
-  @@unique([venueId, userId])
 }
 
 model VenueImage {

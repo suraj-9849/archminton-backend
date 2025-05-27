@@ -7,6 +7,12 @@ import { BookingStatus, PaymentStatus, SportType, Role } from "@prisma/client";
 
 const router = express.Router();
 
+router.get("/test",(req,res)=>{
+  res.json({
+    message: "Admin booking routes working!",
+  });
+})
+
 router.use(authenticate);
 router.use(adminOnly);
 
