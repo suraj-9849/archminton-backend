@@ -26,7 +26,10 @@ import adminSocietyRoutes from './routes/admin/society.routes';
 import adminCourtRoutes from './routes/admin/court.routes';
 import adminBookingRoutes from './routes/admin/booking.routes';
 import adminCourseRoutes from './routes/admin/course.routes';
+import adminMembershipRoutes from './routes/admin/membership.routes';
+import { membershipRoutes } from './routes/membership.routes';
 
+// Add these route definitions to your existing app.ts after other admin routes
 // Initialize Express app
 const app = express();
 
@@ -51,8 +54,10 @@ app.use('/api/courts', courtRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/societies', societyRoutes);
 app.use('/api/courses', courseRoutes);
+app.use('/api/membership', membershipRoutes);
 
 // Admin Routes
+app.use('/api/admin/membership', adminMembershipRoutes);
 app.use('/api/admin/dashboard', adminDashboardRoutes);
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/admin/venues', adminVenueRoutes);

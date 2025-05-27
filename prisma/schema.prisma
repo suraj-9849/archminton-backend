@@ -29,6 +29,8 @@ model User {
   venues             Venue[]            @relation("VenueUserAccess")
 
   VenueUserAccess VenueUserAccess[]
+
+  UserMembership UserMembership[]
 }
 
 enum Role {
@@ -86,6 +88,82 @@ model Venue {
   sportsConfig    VenueSportsConfig[]
 
   User User[] @relation("VenueUserAccess")
+}
+
+enum MembershipType {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  LIFETIME
+}
+
+enum MembershipStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  CANCELLED
+}
+
+model MembershipPackage {
+  id                  Int              @id @default(autoincrement())
+  name                String
+  description         String?
+  type                MembershipType
+  price               Decimal          @db.Decimal(10, 2)
+  durationMonths      Int
+  credits             Int?             @default(0)
+  features            Json?
+  maxBookingsPerMonth Int?
+  allowedSports       SportType[]
+  venueAccess         Int[]
+  isActive            Boolean          @default(true)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  memberships         UserMembership[]
+
+  @@index([type])
+  @@index([isActive])
+}
+
+model UserMembership {
+  id                Int                     @id @default(autoincrement())
+  userId            Int
+  packageId         Int
+  startDate         DateTime
+  endDate           DateTime
+  status            MembershipStatus        @default(ACTIVE)
+  creditsRemaining  Int?                    @default(0)
+  bookingsThisMonth Int                     @default(0)
+  autoRenew         Boolean                 @default(false)
+  paymentStatus     PaymentStatus           @default(PENDING)
+  purchasePrice     Decimal                 @db.Decimal(10, 2)
+  lastBillingDate   DateTime?
+  nextBillingDate   DateTime?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  user              User                    @relation(fields: [userId], references: [id])
+  package           MembershipPackage       @relation(fields: [packageId], references: [id])
+  transactions      MembershipTransaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([endDate])
+}
+
+model MembershipTransaction {
+  id               Int            @id @default(autoincrement())
+  membershipId     Int
+  type             String // 'PURCHASE', 'RENEWAL', 'CREDIT_USAGE', 'REFUND'
+  amount           Decimal?       @db.Decimal(10, 2)
+  credits          Int?           @default(0)
+  description      String?
+  transactionDate  DateTime       @default(now())
+  paymentMethod    PaymentMethod?
+  paymentReference String?
+  membership       UserMembership @relation(fields: [membershipId], references: [id])
+
+  @@index([membershipId])
+  @@index([type])
 }
 
 enum VenueType {
