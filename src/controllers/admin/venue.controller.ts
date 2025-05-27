@@ -9,10 +9,6 @@ const prisma = new PrismaClient();
  * Admin controller for venue management
  */
 export class AdminVenueController {
-  /**
-   * Get all venues (admin view)
-   * @route GET /api/admin/venues
-   */
   async getAllVenues(req: Request, res: Response): Promise<void> {
     try {
       const page = Number(req.query.page) || 1;
@@ -128,20 +124,25 @@ export class AdminVenueController {
         contactEmail,
         venueType,
         societyId,
+        services,
+        amenities,
+        images,
       } = req.body;
 
-      if (!Object.values(VenueType).includes(venueType)) {
-        errorResponse(res, "Invalid venue type", 400);
-        return;
-      }
+      if (images && images.length > 0) {
+        const invalidImage = images.find(
+          (img: { imageUrl: string; isDefault: any }) =>
+            typeof img.imageUrl !== "string" ||
+            img.imageUrl.trim() === "" ||
+            typeof img.isDefault !== "boolean"
+        );
 
-      if (venueType === VenueType.PRIVATE && societyId) {
-        const society = await prisma.society.findUnique({
-          where: { id: Number(societyId) },
-        });
-
-        if (!society) {
-          errorResponse(res, "Society not found", 404);
+        if (invalidImage) {
+          errorResponse(
+            res,
+            "Each image must have a valid 'imageUrl' and 'isDefault' boolean",
+            400
+          );
           return;
         }
       }
@@ -157,19 +158,35 @@ export class AdminVenueController {
           contactEmail,
           venueType,
           societyId: societyId ? Number(societyId) : null,
+          services: { set: services },
+          amenities: { set: amenities },
+          images: { create: images },
         },
         include: {
           society: {
-            select: {
-              id: true,
-              name: true,
-            },
+            select: { id: true, name: true },
           },
           sportsConfig: true,
+          images: true,
+          courts: {
+            select: {
+              sportType: true,
+            },
+          },
         },
       });
 
-      successResponse(res, venue, "Venue created successfully", 201);
+      const formattedVenue = {
+        ...venue,
+        images: venue.images.map((img) => img.imageUrl),
+        services: venue.services.map((s) => formatEnum(s)),
+        amenities: venue.amenities.map((a) => formatEnum(a)),
+        availableSports: [
+          ...new Set(venue.courts?.map((c) => formatEnum(c.sportType)) ?? []),
+        ],
+      };
+
+      successResponse(res, formattedVenue, "Venue created successfully", 201);
     } catch (error: any) {
       logger.error("Error creating venue:", error);
       errorResponse(res, error.message || "Error creating venue", 400);
@@ -357,10 +374,7 @@ export class AdminVenueController {
             include: {
               timeSlots: {
                 where: { isActive: true },
-                orderBy: [
-                  { dayOfWeek: "asc" },
-                  { startTime: "asc" },
-                ],
+                orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
               },
               _count: {
                 select: {
@@ -382,7 +396,7 @@ export class AdminVenueController {
               createdAt: "asc",
             },
           },
-          images: true,
+          images: true, // Include all images
           venueUserAccess: {
             include: {
               user: {
@@ -401,21 +415,17 @@ export class AdminVenueController {
         errorResponse(res, "Venue not found", 404);
         return;
       }
-
-      // Add court count for each sport configuration
-      const venueWithCounts = {
+      const venueWithServices = {
         ...venue,
-        sportsConfig: venue.sportsConfig.map((config) => ({
-          ...config,
-          _count: {
-            courts: venue.courts.filter(
-              (court) => court.sportType === config.sportType && court.isActive
-            ).length,
-          },
-        })),
+        services: venue?.services ?? [],
+        amenities: venue?.amenities ?? [],
       };
 
-      successResponse(res, venueWithCounts, "Venue details retrieved successfully");
+      successResponse(
+        res,
+        venueWithServices,
+        "Venue details retrieved successfully"
+      );
     } catch (error: any) {
       logger.error("Error getting venue details (admin):", error);
       errorResponse(
@@ -552,3 +562,11 @@ export class AdminVenueController {
 }
 
 export default new AdminVenueController();
+function formatEnum(value: string): string {
+  return value
+    .toLowerCase()
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+

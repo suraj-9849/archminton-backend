@@ -1,0 +1,16 @@
+-- CreateEnum
+CREATE TYPE "ServiceType" AS ENUM ('BOOK_N_PLAY', 'COACHING', 'EVENTS', 'MEMBERSHIP');
+
+-- CreateEnum
+CREATE TYPE "AmenityType" AS ENUM ('PARKING', 'LOCKER_ROOMS', 'CHANGING_ROOMS', 'SHOWER_FACILITIES', 'CAFETERIA', 'RESTAURANT', 'PRO_SHOP', 'EQUIPMENT_RENTAL', 'WIFI', 'AIR_CONDITIONING', 'LIGHTING', 'SOUND_SYSTEM', 'FIRST_AID', 'SECURITY', 'WHEELCHAIR_ACCESS', 'SPECTATOR_SEATING', 'WASHROOMS', 'WATER_FOUNTAINS', 'VENDING_MACHINES', 'TOWEL_SERVICE');
+
+-- AlterTable
+ALTER TABLE "Venue" ADD COLUMN     "amenities" "AmenityType"[] DEFAULT ARRAY[]::"AmenityType"[],
+ADD COLUMN     "services" "ServiceType"[] DEFAULT ARRAY[]::"ServiceType"[];
+
+-- AlterTable
+ALTER TABLE "VenueImage" ADD COLUMN     "caption" TEXT,
+ADD COLUMN     "order" INTEGER NOT NULL DEFAULT 0;
+
+-- CreateIndex
+CREATE INDEX "VenueImage_venueId_order_idx" ON "VenueImage"("venueId", "order");

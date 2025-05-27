@@ -32,7 +32,16 @@ export class VenueController {
         isActive
       });
 
-      successResponse(res, venues, 'Venues retrieved successfully');
+      const venuesWithSports = venues.map(venue => {
+        const sports = [...new Set(venue.courts?.map((court: { sportType: any; }) => court.sportType) || [])];
+        
+        return {
+          ...venue,
+          sports
+        };
+      });
+
+      successResponse(res, venuesWithSports, 'Venues retrieved successfully');
     } catch (error: any) {
       logger.error('Error getting venues:', error);
       errorResponse(res, error.message, 400);
@@ -58,7 +67,13 @@ export class VenueController {
       }
 
       const venue = await venueService.getVenueById(venueId, req.user.userId);
-      successResponse(res, venue, 'Venue retrieved successfully');
+      
+      const venueWithSports = {
+        ...venue,
+        sports: [...new Set(venue.courts?.map(court => court.sportType) || [])]
+      };
+
+      successResponse(res, venueWithSports, 'Venue retrieved successfully');
     } catch (error: any) {
       logger.error('Error getting venue by ID:', error);
       errorResponse(
@@ -157,7 +172,15 @@ export class VenueController {
         location: query
       });
 
-      successResponse(res, venues, 'Search results retrieved successfully');
+      const venuesWithSports = venues.map(venue => {
+        const sports = [...new Set(venue.courts?.map((court: { sportType: any; }) => court.sportType) || [])];
+        return {
+          ...venue,
+          sports
+        };
+      });
+
+      successResponse(res, venuesWithSports, 'Search results retrieved successfully');
     } catch (error: any) {
       logger.error('Error searching venues:', error);
       errorResponse(res, error.message, 400);
@@ -186,7 +209,15 @@ export class VenueController {
         sportType
       });
 
-      successResponse(res, venues, 'Venues retrieved successfully');
+      const venuesWithSports = venues.map(venue => {
+        const sports = [...new Set(venue.courts?.map((court: { sportType: any; }) => court.sportType) || [])];
+        return {
+          ...venue,
+          sports
+        };
+      });
+
+      successResponse(res, venuesWithSports, 'Venues retrieved successfully');
     } catch (error: any) {
       logger.error('Error getting venues by sport:', error);
       errorResponse(res, error.message, 400);

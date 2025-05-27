@@ -3,6 +3,7 @@ import { body, param, query } from "express-validator";
 import { membershipController } from "../controllers/admin/membership.controller";
 import { authenticate } from "../middlewares/auth.middleware";
 import { validate } from "../middlewares/validate.middleware";
+import { PaymentMethod } from "@prisma/client";
 
 const userRouter = express.Router();
 
@@ -21,7 +22,6 @@ userRouter.get(
   membershipController.getAvailablePackages
 );
 
-// Get user's memberships
 const getMyMembershipsValidation = [
   query("includeExpired")
     .optional()
@@ -35,7 +35,6 @@ userRouter.get(
   membershipController.getMyMemberships
 );
 
-// Purchase membership
 const purchaseMembershipValidation = [
   body("packageId")
     .isInt({ min: 1 })
@@ -44,7 +43,9 @@ const purchaseMembershipValidation = [
     .optional()
     .isBoolean()
     .withMessage("Auto renew must be a boolean"),
-  body("paymentMethod").isString().withMessage("Payment method is required"),
+  body("paymentMethod")
+    .isIn(Object.values(PaymentMethod))
+    .withMessage("Valid payment method is required"),
   body("paymentReference")
     .optional()
     .isString()
@@ -57,12 +58,37 @@ userRouter.post(
   membershipController.purchaseMembership
 );
 
-// Cancel membership
+const confirmPaymentValidation = [
+  param("id")
+    .isInt({ min: 1 })
+    .withMessage("Membership ID must be a positive integer"),
+  body("paymentMethod")
+    .isIn(Object.values(PaymentMethod))
+    .withMessage("Valid payment method is required"),
+  body("paymentReference")
+    .optional()
+    .isString()
+    .withMessage("Payment reference must be a string"),
+  body("transactionId")
+    .optional()
+    .isString()
+    .withMessage("Transaction ID must be a string"),
+];
+
+userRouter.post(
+  "/confirm-payment/:id",
+  validate(confirmPaymentValidation),
+  membershipController.confirmMyPayment
+);
+
 const cancelMyMembershipValidation = [
   param("id")
     .isInt({ min: 1 })
     .withMessage("Membership ID must be a positive integer"),
-  body("reason").optional().isString().withMessage("Reason must be a string"),
+  body("reason")
+    .optional()
+    .isString()
+    .withMessage("Reason must be a string"),
 ];
 
 userRouter.post(

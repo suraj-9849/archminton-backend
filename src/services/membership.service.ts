@@ -3,6 +3,7 @@ import {
   MembershipType,
   MembershipStatus,
   PaymentStatus,
+  PaymentMethod,
   SportType,
 } from "@prisma/client";
 import logger from "../utils/logger";
@@ -41,8 +42,16 @@ interface CreateUserMembershipInput {
   packageId: number;
   startDate?: Date;
   autoRenew?: boolean;
-  paymentMethod?: string;
+  paymentMethod?: PaymentMethod;
   paymentReference?: string;
+  skipPayment?: boolean; // For admin-created memberships
+}
+
+interface ProcessPaymentInput {
+  membershipId: number;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  transactionId?: string;
 }
 
 export class MembershipService {
@@ -218,6 +227,7 @@ export class MembershipService {
     filters?: {
       status?: MembershipStatus;
       includeExpired?: boolean;
+      paymentStatus?: PaymentStatus;
     }
   ) {
     const where: any = { userId };
@@ -228,6 +238,10 @@ export class MembershipService {
       where.status = {
         in: ["ACTIVE", "SUSPENDED"],
       };
+    }
+
+    if (filters?.paymentStatus) {
+      where.paymentStatus = filters.paymentStatus;
     }
 
     return prisma.userMembership.findMany({
@@ -305,6 +319,10 @@ export class MembershipService {
       nextBillingDate = new Date(endDate);
     }
 
+    // Determine payment status and membership status
+    const paymentStatus = membershipData.skipPayment ? PaymentStatus.PAID : PaymentStatus.PENDING;
+    const membershipStatus = membershipData.skipPayment ? MembershipStatus.ACTIVE : MembershipStatus.PENDING;
+
     const membership = await prisma.$transaction(async (tx) => {
       // Create membership
       const newMembership = await tx.userMembership.create({
@@ -313,9 +331,10 @@ export class MembershipService {
           packageId: membershipData.packageId,
           startDate,
           endDate,
-          creditsRemaining: package_.credits || 0,
+          status: membershipStatus,
+          creditsRemaining: membershipData.skipPayment ? (package_.credits || 0) : 0,
           autoRenew: membershipData.autoRenew || false,
-          paymentStatus: PaymentStatus.PAID,
+          paymentStatus: paymentStatus,
           purchasePrice: package_.price,
           nextBillingDate,
         },
@@ -325,11 +344,13 @@ export class MembershipService {
       await tx.membershipTransaction.create({
         data: {
           membershipId: newMembership.id,
-          type: "PURCHASE",
+          type: membershipData.skipPayment ? "PURCHASE" : "PENDING_PAYMENT",
           amount: package_.price,
-          credits: package_.credits || 0,
-          description: `Purchase of ${package_.name} membership`,
-          paymentMethod: membershipData.paymentMethod as any,
+          credits: membershipData.skipPayment ? (package_.credits || 0) : 0,
+          description: membershipData.skipPayment 
+            ? `Purchase of ${package_.name} membership`
+            : `Pending payment for ${package_.name} membership`,
+          paymentMethod: membershipData.paymentMethod,
           paymentReference: membershipData.paymentReference,
         },
       });
@@ -338,6 +359,91 @@ export class MembershipService {
     });
 
     return this.getMembershipById(membership.id);
+  }
+
+  // New method to process payment for pending memberships
+  async processPayment(paymentData: ProcessPaymentInput) {
+    const membership = await prisma.userMembership.findUnique({
+      where: { id: paymentData.membershipId },
+      include: { package: true },
+    });
+
+    if (!membership) {
+      throw new Error("Membership not found");
+    }
+
+    if (membership.paymentStatus === PaymentStatus.PAID) {
+      throw new Error("Payment already processed for this membership");
+    }
+
+    if (membership.paymentStatus === PaymentStatus.FAILED) {
+      throw new Error("Cannot process payment for failed membership");
+    }
+
+    const processedMembership = await prisma.$transaction(async (tx) => {
+      // Update membership payment status and activate
+      const updated = await tx.userMembership.update({
+        where: { id: paymentData.membershipId },
+        data: {
+          paymentStatus: PaymentStatus.PAID,
+          status: MembershipStatus.ACTIVE,
+          creditsRemaining: membership.package.credits || 0,
+        },
+      });
+
+      // Create payment confirmation transaction
+      await tx.membershipTransaction.create({
+        data: {
+          membershipId: paymentData.membershipId,
+          type: "PAYMENT_CONFIRMATION",
+          amount: membership.purchasePrice,
+          credits: membership.package.credits || 0,
+          description: `Payment confirmed for ${membership.package.name} membership`,
+          paymentMethod: paymentData.paymentMethod,
+          paymentReference: paymentData.paymentReference,
+        },
+      });
+
+      return updated;
+    });
+
+    return this.getMembershipById(processedMembership.id);
+  }
+
+  // Method to mark payment as failed
+  async markPaymentFailed(membershipId: number, reason?: string) {
+    const membership = await prisma.userMembership.findUnique({
+      where: { id: membershipId },
+      include: { package: true },
+    });
+
+    if (!membership) {
+      throw new Error("Membership not found");
+    }
+
+    const failedMembership = await prisma.$transaction(async (tx) => {
+      // Update membership payment status
+      const updated = await tx.userMembership.update({
+        where: { id: membershipId },
+        data: {
+          paymentStatus: PaymentStatus.FAILED,
+          status: MembershipStatus.CANCELLED,
+        },
+      });
+
+      // Create failure transaction
+      await tx.membershipTransaction.create({
+        data: {
+          membershipId: membershipId,
+          type: "PAYMENT_FAILED",
+          description: reason || `Payment failed for ${membership.package.name} membership`,
+        },
+      });
+
+      return updated;
+    });
+
+    return this.getMembershipById(failedMembership.id);
   }
 
   async renewMembership(membershipId: number, paymentReference?: string) {
@@ -458,6 +564,53 @@ export class MembershipService {
     });
   }
 
+  // Get pending payments
+  async getPendingPayments(venueId?: number) {
+    const membershipFilter: any = {
+      paymentStatus: PaymentStatus.PENDING,
+      status: MembershipStatus.PENDING,
+    };
+
+    if (venueId) {
+      membershipFilter.package = {
+        venueAccess: {
+          has: venueId,
+        },
+      };
+    }
+
+    return prisma.userMembership.findMany({
+      where: membershipFilter,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        package: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            price: true,
+          },
+        },
+        transactions: {
+          orderBy: {
+            transactionDate: "desc",
+          },
+          take: 1,
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
+
   // Statistics and Analytics
   async getMembershipStatistics(venueId?: number) {
     const packageFilter = venueId
@@ -480,6 +633,7 @@ export class MembershipService {
       totalMemberships,
       activeMemberships,
       expiredMemberships,
+      pendingPayments,
       totalRevenue,
       monthlyRevenue,
     ] = await Promise.all([
@@ -514,6 +668,14 @@ export class MembershipService {
         where: {
           ...membershipFilter,
           status: "EXPIRED",
+        },
+      }),
+
+      // Pending payments
+      prisma.userMembership.count({
+        where: {
+          ...membershipFilter,
+          paymentStatus: "PENDING",
         },
       }),
 
@@ -553,7 +715,8 @@ export class MembershipService {
         total: totalMemberships,
         active: activeMemberships,
         expired: expiredMemberships,
-        other: totalMemberships - activeMemberships - expiredMemberships,
+        pending: pendingPayments,
+        other: totalMemberships - activeMemberships - expiredMemberships - pendingPayments,
       },
       revenue: {
         total: Number(totalRevenue._sum.purchasePrice) || 0,
@@ -620,6 +783,10 @@ export class MembershipService {
 
     if (membership.status !== "ACTIVE") {
       throw new Error("Membership is not active");
+    }
+
+    if (membership.paymentStatus !== "PAID") {
+      throw new Error("Membership payment is not confirmed");
     }
 
     if ((membership.creditsRemaining || 0) < credits) {

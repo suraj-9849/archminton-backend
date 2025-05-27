@@ -2,10 +2,9 @@ import { Request, Response } from 'express';
 import membershipService from '../../services/membership.service';
 import { successResponse, errorResponse } from '../../utils/response';
 import logger from '../../utils/logger';
-import { MembershipType, MembershipStatus } from '@prisma/client';
+import { MembershipType, MembershipStatus, PaymentMethod } from '@prisma/client';
 
 export class AdminMembershipController {
-  // Membership Package Management
   async getAllPackages(req: Request, res: Response): Promise<void> {
     try {
       const type = req.query.type as MembershipType | undefined;
@@ -153,7 +152,6 @@ export class AdminMembershipController {
     }
   }
 
-  // User Membership Management
   async getAllMemberships(req: Request, res: Response): Promise<void> {
     try {
       const page = Number(req.query.page) || 1;
@@ -163,8 +161,6 @@ export class AdminMembershipController {
       const userId = req.query.userId ? Number(req.query.userId) : undefined;
       const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
 
-      // This would need to be implemented in the service
-      // For now, returning a placeholder response
       successResponse(res, { memberships: [], pagination: {} }, 'Memberships retrieved successfully');
     } catch (error: any) {
       logger.error('Error getting memberships:', error);
@@ -201,7 +197,8 @@ export class AdminMembershipController {
         startDate,
         autoRenew,
         paymentMethod,
-        paymentReference
+        paymentReference,
+        skipPayment // Admin can create paid memberships directly
       } = req.body;
 
       const membership = await membershipService.createUserMembership({
@@ -209,8 +206,9 @@ export class AdminMembershipController {
         packageId: Number(packageId),
         startDate: startDate ? new Date(startDate) : undefined,
         autoRenew,
-        paymentMethod,
-        paymentReference
+        paymentMethod: paymentMethod as PaymentMethod,
+        paymentReference,
+        skipPayment: skipPayment || false
       });
 
       successResponse(res, membership, 'Membership created successfully', 201);
@@ -277,7 +275,62 @@ export class AdminMembershipController {
     }
   }
 
-  // Statistics and Reports
+  async processPayment(req: Request, res: Response): Promise<void> {
+    try {
+      const membershipId = Number(req.params.id);
+      
+      if (isNaN(membershipId)) {
+        errorResponse(res, 'Invalid membership ID', 400);
+        return;
+      }
+
+      const { paymentMethod, paymentReference, transactionId } = req.body;
+
+      const membership = await membershipService.processPayment({
+        membershipId,
+        paymentMethod: paymentMethod as PaymentMethod,
+        paymentReference,
+        transactionId
+      });
+
+      successResponse(res, membership, 'Payment processed successfully');
+    } catch (error: any) {
+      logger.error('Error processing payment:', error);
+      errorResponse(res, error.message || 'Error processing payment', 400);
+    }
+  }
+
+  async markPaymentFailed(req: Request, res: Response): Promise<void> {
+    try {
+      const membershipId = Number(req.params.id);
+      
+      if (isNaN(membershipId)) {
+        errorResponse(res, 'Invalid membership ID', 400);
+        return;
+      }
+
+      const { reason } = req.body;
+
+      const membership = await membershipService.markPaymentFailed(membershipId, reason);
+      successResponse(res, membership, 'Payment marked as failed');
+    } catch (error: any) {
+      logger.error('Error marking payment as failed:', error);
+      errorResponse(res, error.message || 'Error marking payment as failed', 400);
+    }
+  }
+
+  async getPendingPayments(req: Request, res: Response): Promise<void> {
+    try {
+      const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
+
+      const pendingPayments = await membershipService.getPendingPayments(venueId);
+      successResponse(res, pendingPayments, 'Pending payments retrieved successfully');
+    } catch (error: any) {
+      logger.error('Error getting pending payments:', error);
+      errorResponse(res, error.message || 'Error retrieving pending payments', 500);
+    }
+  }
+
   async getMembershipStatistics(req: Request, res: Response): Promise<void> {
     try {
       const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
@@ -360,11 +413,12 @@ export class MembershipController {
         userId: req.user.userId,
         packageId: Number(packageId),
         autoRenew,
-        paymentMethod,
-        paymentReference
+        paymentMethod: paymentMethod as PaymentMethod,
+        paymentReference,
+        skipPayment: false // Users must pay
       });
 
-      successResponse(res, membership, 'Membership purchased successfully', 201);
+      successResponse(res, membership, 'Membership purchase initiated. Please complete payment.', 201);
     } catch (error: any) {
       logger.error('Error purchasing membership:', error);
       errorResponse(res, error.message || 'Error purchasing membership', 400);
@@ -385,7 +439,6 @@ export class MembershipController {
         return;
       }
 
-      // Verify ownership
       const membership = await membershipService.getMembershipById(membershipId);
       if (membership.userId !== req.user.userId) {
         errorResponse(res, 'You can only cancel your own memberships', 403);
@@ -399,6 +452,42 @@ export class MembershipController {
     } catch (error: any) {
       logger.error('Error cancelling membership:', error);
       errorResponse(res, error.message || 'Error cancelling membership', 400);
+    }
+  }
+
+  async confirmMyPayment(req: Request, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        errorResponse(res, 'Unauthorized', 401);
+        return;
+      }
+
+      const membershipId = Number(req.params.id);
+      
+      if (isNaN(membershipId)) {
+        errorResponse(res, 'Invalid membership ID', 400);
+        return;
+      }
+
+      const membership = await membershipService.getMembershipById(membershipId);
+      if (membership.userId !== req.user.userId) {
+        errorResponse(res, 'You can only confirm payment for your own memberships', 403);
+        return;
+      }
+
+      const { paymentMethod, paymentReference, transactionId } = req.body;
+
+      const updatedMembership = await membershipService.processPayment({
+        membershipId,
+        paymentMethod: paymentMethod as PaymentMethod,
+        paymentReference,
+        transactionId
+      });
+
+      successResponse(res, updatedMembership, 'Payment confirmed successfully');
+    } catch (error: any) {
+      logger.error('Error confirming payment:', error);
+      errorResponse(res, error.message || 'Error confirming payment', 400);
     }
   }
 }

@@ -1,10 +1,10 @@
-// src/routes/admin/membership.routes.ts
+
 import express from 'express';
 import { body, param, query } from 'express-validator';
 import { adminMembershipController } from '../../controllers/admin/membership.controller';
 import { authenticate, adminOnly } from '../../middlewares/auth.middleware';
 import { validate } from '../../middlewares/validate.middleware';
-import { MembershipType, MembershipStatus, SportType } from '@prisma/client';
+import { MembershipType, MembershipStatus, SportType, PaymentMethod } from '@prisma/client';
 
 const router = express.Router();
 
@@ -194,12 +194,16 @@ const createMembershipValidation = [
     .withMessage('Auto renew must be a boolean'),
   body('paymentMethod')
     .optional()
-    .isString()
-    .withMessage('Payment method must be a string'),
+    .isIn(Object.values(PaymentMethod))
+    .withMessage('Invalid payment method'),
   body('paymentReference')
     .optional()
     .isString()
-    .withMessage('Payment reference must be a string')
+    .withMessage('Payment reference must be a string'),
+  body('skipPayment')
+    .optional()
+    .isBoolean()
+    .withMessage('Skip payment must be a boolean')
 ];
 
 router.post('/memberships', validate(createMembershipValidation), adminMembershipController.createMembership);
@@ -238,6 +242,48 @@ const updateMembershipStatusValidation = [
 ];
 
 router.patch('/memberships/:id/status', validate(updateMembershipStatusValidation), adminMembershipController.updateMembershipStatus);
+
+// Payment Management Routes
+const processPaymentValidation = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('Membership ID must be a positive integer'),
+  body('paymentMethod')
+    .isIn(Object.values(PaymentMethod))
+    .withMessage('Valid payment method is required'),
+  body('paymentReference')
+    .optional()
+    .isString()
+    .withMessage('Payment reference must be a string'),
+  body('transactionId')
+    .optional()
+    .isString()
+    .withMessage('Transaction ID must be a string')
+];
+
+router.post('/memberships/:id/process-payment', validate(processPaymentValidation), adminMembershipController.processPayment);
+
+const markPaymentFailedValidation = [
+  param('id')
+    .isInt({ min: 1 })
+    .withMessage('Membership ID must be a positive integer'),
+  body('reason')
+    .optional()
+    .isString()
+    .withMessage('Reason must be a string')
+];
+
+router.post('/memberships/:id/mark-payment-failed', validate(markPaymentFailedValidation), adminMembershipController.markPaymentFailed);
+
+// Get pending payments
+const pendingPaymentsValidation = [
+  query('venueId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Venue ID must be a positive integer')
+];
+
+router.get('/pending-payments', validate(pendingPaymentsValidation), adminMembershipController.getPendingPayments);
 
 // Statistics and Reports
 const statisticsValidation = [

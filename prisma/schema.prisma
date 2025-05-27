@@ -79,6 +79,8 @@ model Venue {
   isActive        Boolean             @default(true)
   venueType       VenueType           @default(PUBLIC)
   societyId       Int?
+  services        ServiceType[]       @default([])
+  amenities       AmenityType[]       @default([])
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   society         Society?            @relation(fields: [societyId], references: [id])
@@ -90,6 +92,36 @@ model Venue {
   User User[] @relation("VenueUserAccess")
 }
 
+enum ServiceType {
+  BOOK_N_PLAY
+  COACHING
+  EVENTS
+  MEMBERSHIP
+}
+
+enum AmenityType {
+  PARKING
+  LOCKER_ROOMS
+  CHANGING_ROOMS
+  SHOWER_FACILITIES
+  CAFETERIA
+  RESTAURANT
+  PRO_SHOP
+  EQUIPMENT_RENTAL
+  WIFI
+  AIR_CONDITIONING
+  LIGHTING
+  SOUND_SYSTEM
+  FIRST_AID
+  SECURITY
+  WHEELCHAIR_ACCESS
+  SPECTATOR_SEATING
+  WASHROOMS
+  WATER_FOUNTAINS
+  VENDING_MACHINES
+  TOWEL_SERVICE
+}
+
 enum MembershipType {
   MONTHLY
   QUARTERLY
@@ -98,6 +130,7 @@ enum MembershipType {
 }
 
 enum MembershipStatus {
+  PENDING
   ACTIVE
   EXPIRED
   SUSPENDED
@@ -147,19 +180,21 @@ model UserMembership {
 
   @@index([userId])
   @@index([status])
+  @@index([paymentStatus])
   @@index([endDate])
 }
 
 model MembershipTransaction {
   id               Int            @id @default(autoincrement())
   membershipId     Int
-  type             String // 'PURCHASE', 'RENEWAL', 'CREDIT_USAGE', 'REFUND'
+  type             String
   amount           Decimal?       @db.Decimal(10, 2)
   credits          Int?           @default(0)
   description      String?
   transactionDate  DateTime       @default(now())
   paymentMethod    PaymentMethod?
   paymentReference String?
+  transactionId    String?
   membership       UserMembership @relation(fields: [membershipId], references: [id])
 
   @@index([membershipId])
@@ -198,9 +233,13 @@ model VenueImage {
   id        Int      @id @default(autoincrement())
   venueId   Int
   imageUrl  String
+  caption   String?
   isDefault Boolean  @default(false)
+  order     Int      @default(0)
   createdAt DateTime @default(now())
   venue     Venue    @relation(fields: [venueId], references: [id])
+
+  @@index([venueId, order])
 }
 
 model Court {
