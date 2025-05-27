@@ -44,9 +44,9 @@ export class AdminUserController {
       // Calculate pagination values
       const skip = (page - 1) * limit;
 
-      // Fetch users with pagination and filters
+      // Fetch users with pagination and filters - UPDATED TO INCLUDE MEMBERSHIPS
       const [users, totalUsers] = await Promise.all([
-        // Get users for current page
+        // Get users for current page with memberships
         prisma.user.findMany({
           where,
           select: {
@@ -57,7 +57,28 @@ export class AdminUserController {
             gender: true,
             role: true,
             createdAt: true,
-            updatedAt: true
+            updatedAt: true,
+            // ADD MEMBERSHIPS WITH PACKAGE DETAILS
+            UserMembership: {
+              include: {
+                package: {
+                  select: {
+                    id: true,
+                    name: true,
+                    type: true,
+                    price: true,
+                    durationMonths: true,
+                    credits: true,
+                    maxBookingsPerMonth: true,
+                    allowedSports: true,
+                    isActive: true
+                  }
+                }
+              },
+              orderBy: {
+                createdAt: 'desc'
+              }
+            }
           },
           orderBy: {
             [sortBy]: sortOrder
@@ -70,6 +91,12 @@ export class AdminUserController {
         prisma.user.count({ where })
       ]);
 
+      // Transform the response to match expected format
+      const transformedUsers = users.map(user => ({
+        ...user,
+        memberships: user.UserMembership || []
+      }));
+
       // Calculate pagination metadata
       const totalPages = Math.ceil(totalUsers / limit);
       const hasNext = page < totalPages;
@@ -78,7 +105,7 @@ export class AdminUserController {
       successResponse(
         res,
         {
-          users,
+          users: transformedUsers,
           pagination: {
             page,
             limit,
@@ -109,7 +136,7 @@ export class AdminUserController {
         return;
       }
 
-      // Get user with related data
+      // Get user with related data - UPDATED TO INCLUDE MEMBERSHIPS
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -121,6 +148,27 @@ export class AdminUserController {
           role: true,
           createdAt: true,
           updatedAt: true,
+          // ADD MEMBERSHIPS
+          UserMembership: {
+            include: {
+              package: {
+                select: {
+                  id: true,
+                  name: true,
+                  type: true,
+                  price: true,
+                  durationMonths: true,
+                  credits: true,
+                  maxBookingsPerMonth: true,
+                  allowedSports: true,
+                  isActive: true
+                }
+              }
+            },
+            orderBy: {
+              createdAt: 'desc'
+            }
+          },
           societyMemberships: {
             include: {
               society: true
@@ -153,13 +201,21 @@ export class AdminUserController {
         return;
       }
 
-      successResponse(res, user, 'User details retrieved successfully');
+      // Transform the response to match expected format
+      const transformedUser = {
+        ...user,
+        memberships: user.UserMembership || []
+      };
+
+      successResponse(res, transformedUser, 'User details retrieved successfully');
     } catch (error: any) {
       logger.error('Error getting user by ID:', error);
       errorResponse(res, error.message || 'Error retrieving user details', 500);
     }
   }
 
+  // ... rest of your methods remain the same (createUser, updateUser, resetPassword, deleteUser)
+  
   /**
    * Create a new user (admin capability)
    * @route POST /api/admin/users
