@@ -12,6 +12,7 @@ interface VenueFilterOptions {
 
 /**
  * Service for venue-related operations
+ * All venues are now accessible to all users, with society-based private venues
  */
 export class VenueService {
   /**
@@ -22,7 +23,8 @@ export class VenueService {
     const userSocieties = await prisma.societyMember.findMany({
       where: {
         userId,
-        isActive: true
+        isActive: true,
+        status: 'ACTIVE' // Only active memberships
       },
       select: {
         societyId: true
@@ -54,7 +56,7 @@ export class VenueService {
       };
     }
 
-    // Get public venues
+    // Get all public venues - accessible to everyone
     const publicVenues = await prisma.venue.findMany({
       where: {
         ...baseConditions,
@@ -117,48 +119,10 @@ export class VenueService {
       }
     });
 
-    // Get private venues with explicit user access via VenueUserAccess
-    const userAccessVenues = await prisma.venueUserAccess.findMany({
-      where: {
-        userId
-      },
-      select: {
-        venue: {
-          include: {
-            courts: {
-              where: {
-                isActive: true,
-                ...(filters?.sportType ? { sportType: filters.sportType } : {})
-              },
-              include: {
-                timeSlots: {
-                  where: {
-                    isActive: true
-                  }
-                }
-              }
-            },
-            images: {
-              take: 1,
-              where: {
-                isDefault: true
-              }
-            },
-            society: true
-          }
-        }
-      }
-    });
+    // Combine all venues (public + private society venues)
+    const allVenues = [...publicVenues, ...privateSocietyVenues];
 
-    // Extract venues from user access records
-    const privateAccessVenues = userAccessVenues
-      .map(access => access.venue)
-      .filter(venue => venue.isActive === (filters?.isActive ?? true));
-
-    // Combine all venues
-    const allVenues = [...publicVenues, ...privateSocietyVenues, ...privateAccessVenues];
-
-    // Remove duplicates
+    // Remove duplicates (shouldn't happen, but just in case)
     const uniqueVenueIds = new Set();
     const uniqueVenues = allVenues.filter(venue => {
       if (uniqueVenueIds.has(venue.id)) {
@@ -204,10 +168,7 @@ export class VenueService {
       return venue;
     }
 
-    // For private venues, check if user has access
-    // 1. Check society membership
-    let hasAccess = false;
-
+    // For private venues, check if user has access via society membership
     if (venue.societyId) {
       const societyMembership = await prisma.societyMember.findUnique({
         where: {
@@ -218,25 +179,11 @@ export class VenueService {
         }
       });
       
-      hasAccess = !!societyMembership && societyMembership.isActive;
-    }
-
-    // 2. Check explicit venue access
-    if (!hasAccess) {
-      const venueAccess = await prisma.venueUserAccess.findUnique({
-        where: {
-          venueId_userId: {
-            venueId,
-            userId
-          }
-        }
-      });
+      const hasAccess = !!societyMembership && societyMembership.isActive && societyMembership.status === 'ACTIVE';
       
-      hasAccess = !!venueAccess;
-    }
-
-    if (!hasAccess) {
-      throw new Error('You do not have access to this venue');
+      if (!hasAccess) {
+        throw new Error('You do not have access to this private venue. Please join the associated society first.');
+      }
     }
 
     return venue;
@@ -414,6 +361,47 @@ export class VenueService {
         createdAt: 'desc'
       }
     });
+  }
+
+  /**
+   * Check if user can book a venue (for booking validation)
+   */
+  async canUserBookVenue(userId: number, venueId: number): Promise<boolean> {
+    const venue = await prisma.venue.findUnique({
+      where: {
+        id: venueId,
+        isActive: true
+      },
+      select: {
+        venueType: true,
+        societyId: true
+      }
+    });
+
+    if (!venue) {
+      return false;
+    }
+
+    // Public venues are always bookable
+    if (venue.venueType === VenueType.PUBLIC) {
+      return true;
+    }
+
+    // Private venues require society membership
+    if (venue.societyId) {
+      const membership = await prisma.societyMember.findUnique({
+        where: {
+          userId_societyId: {
+            userId,
+            societyId: venue.societyId
+          }
+        }
+      });
+
+      return !!membership && membership.isActive && membership.status === 'ACTIVE';
+    }
+
+    return false;
   }
 }
 
