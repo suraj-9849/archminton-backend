@@ -18,16 +18,36 @@ export class VenueSportsController {
       const venueId = Number(req.params.id);
       const { sportType, maxCourts } = req.body;
 
-      if (isNaN(venueId)) {
+      // Enhanced validation
+      if (isNaN(venueId) || venueId <= 0) {
         errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
-      // Validate sport type
-      if (!Object.values(SportType).includes(sportType)) {
-        errorResponse(res, "Invalid sport type", 400);
+      // Validate required fields
+      if (!sportType) {
+        errorResponse(res, "Sport type is required", 400);
         return;
       }
+
+      if (!maxCourts || isNaN(Number(maxCourts)) || Number(maxCourts) <= 0) {
+        errorResponse(res, "Max courts must be a positive number", 400);
+        return;
+      }
+
+      // Validate sport type enum
+      if (!Object.values(SportType).includes(sportType as SportType)) {
+        errorResponse(
+          res,
+          `Invalid sport type. Must be one of: ${Object.values(SportType).join(
+            ", "
+          )}`,
+          400
+        );
+        return;
+      }
+
+      logger.info("Adding sport to venue:", { venueId, sportType, maxCourts });
 
       // Check if venue exists
       const venue = await prisma.venue.findUnique({
@@ -39,12 +59,17 @@ export class VenueSportsController {
         return;
       }
 
+      if (!venue.isActive) {
+        errorResponse(res, "Cannot add sports to inactive venue", 400);
+        return;
+      }
+
       // Check if sport already exists for this venue
       const existingSport = await prisma.venueSportsConfig.findUnique({
         where: {
           venueId_sportType: {
             venueId,
-            sportType,
+            sportType: sportType as SportType,
           },
         },
       });
@@ -54,30 +79,85 @@ export class VenueSportsController {
         return;
       }
 
-      // Create sports configuration
+      // Create sports configuration with proper data
+      const sportsConfigData = {
+        venueId: venueId,
+        sportType: sportType as SportType,
+        maxCourts: Number(maxCourts),
+        isActive: true, // Explicitly set to true
+      };
+
+      logger.info("Creating sports config with data:", sportsConfigData);
+
       const sportsConfig = await prisma.venueSportsConfig.create({
-        data: {
-          venueId,
-          sportType,
-          maxCourts: maxCourts || 1,
-        },
+        data: sportsConfigData,
         include: {
           venue: {
-            include: {
-              courts: {
-                where: {
-                  sportType,
-                  isActive: true,
-                },
-              },
+            select: {
+              id: true,
+              name: true,
+              location: true,
             },
           },
         },
       });
 
-      successResponse(res, sportsConfig, "Sport added to venue successfully", 201);
+      // Get existing courts count for this sport
+      const existingCourtsCount = await prisma.court.count({
+        where: {
+          venueId,
+          sportType: sportType as SportType,
+          isActive: true,
+        },
+      });
+
+      const responseData = {
+        ...sportsConfig,
+        existingCourtsCount,
+        remainingCourts: sportsConfig.maxCourts - existingCourtsCount,
+      };
+
+      logger.info("Sport added successfully:", { id: sportsConfig.id });
+      successResponse(
+        res,
+        responseData,
+        "Sport added to venue successfully",
+        201
+      );
     } catch (error: any) {
-      logger.error("Error adding sport to venue:", error);
+      logger.error("Error adding sport to venue:", {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        meta: error.meta,
+        venueId: req.params.id,
+        body: req.body,
+      });
+
+      // Handle specific Prisma errors
+      if (error.code === "P2002") {
+        errorResponse(
+          res,
+          "Sport configuration already exists for this venue",
+          409
+        );
+        return;
+      }
+
+      if (error.code === "P2003") {
+        errorResponse(res, "Invalid venue reference", 400);
+        return;
+      }
+
+      if (error.message?.includes("kind")) {
+        errorResponse(
+          res,
+          "Invalid data type provided. Please check your input values.",
+          400
+        );
+        return;
+      }
+
       errorResponse(res, error.message || "Error adding sport to venue", 400);
     }
   }
@@ -91,7 +171,7 @@ export class VenueSportsController {
       const venueId = Number(req.params.id);
       const sportId = Number(req.params.sportId);
 
-      if (isNaN(venueId) || isNaN(sportId)) {
+      if (isNaN(venueId) || isNaN(sportId) || venueId <= 0 || sportId <= 0) {
         errorResponse(res, "Invalid venue ID or sport ID", 400);
         return;
       }
@@ -99,17 +179,6 @@ export class VenueSportsController {
       // Check if sport configuration exists
       const sportsConfig = await prisma.venueSportsConfig.findUnique({
         where: { id: sportId },
-        include: {
-          venue: {
-            include: {
-              courts: {
-                where: {
-                  sportType: undefined, // Will be set below
-                },
-              },
-            },
-          },
-        },
       });
 
       if (!sportsConfig || sportsConfig.venueId !== venueId) {
@@ -149,17 +218,32 @@ export class VenueSportsController {
         return;
       }
 
-      // If courts exist but no active bookings, deactivate them
+      // If courts exist but no active bookings, deactivate them first
       if (existingCourts.length > 0) {
-        await prisma.court.updateMany({
-          where: {
-            venueId,
-            sportType: sportsConfig.sportType,
-          },
-          data: {
-            isActive: false,
-          },
-        });
+        await prisma.$transaction([
+          // Deactivate all time slots for courts of this sport
+          prisma.timeSlot.updateMany({
+            where: {
+              court: {
+                venueId,
+                sportType: sportsConfig.sportType,
+              },
+            },
+            data: {
+              isActive: false,
+            },
+          }),
+          // Deactivate all courts of this sport
+          prisma.court.updateMany({
+            where: {
+              venueId,
+              sportType: sportsConfig.sportType,
+            },
+            data: {
+              isActive: false,
+            },
+          }),
+        ]);
       }
 
       // Remove sports configuration
@@ -170,7 +254,11 @@ export class VenueSportsController {
       successResponse(res, null, "Sport configuration removed successfully");
     } catch (error: any) {
       logger.error("Error removing sport from venue:", error);
-      errorResponse(res, error.message || "Error removing sport from venue", 400);
+      errorResponse(
+        res,
+        error.message || "Error removing sport from venue",
+        400
+      );
     }
   }
 
@@ -184,7 +272,7 @@ export class VenueSportsController {
       const sportId = Number(req.params.sportId);
       const { maxCourts, isActive } = req.body;
 
-      if (isNaN(venueId) || isNaN(sportId)) {
+      if (isNaN(venueId) || isNaN(sportId) || venueId <= 0 || sportId <= 0) {
         errorResponse(res, "Invalid venue ID or sport ID", 400);
         return;
       }
@@ -199,39 +287,75 @@ export class VenueSportsController {
         return;
       }
 
-      // If reducing maxCourts, check if current courts exceed new limit
-      if (maxCourts && maxCourts < existingConfig.maxCourts) {
-        const currentCourts = await prisma.court.count({
-          where: {
-            venueId,
-            sportType: existingConfig.sportType,
-            isActive: true,
-          },
-        });
+      // Prepare update data
+      const updateData: any = {};
 
-        if (currentCourts > maxCourts) {
-          errorResponse(
-            res,
-            `Cannot reduce max courts to ${maxCourts}. Currently ${currentCourts} active courts exist.`,
-            400
-          );
+      // If reducing maxCourts, check if current courts exceed new limit
+      if (maxCourts !== undefined) {
+        const maxCourtsNum = Number(maxCourts);
+        if (isNaN(maxCourtsNum) || maxCourtsNum <= 0) {
+          errorResponse(res, "Max courts must be a positive number", 400);
           return;
         }
+
+        if (maxCourtsNum < existingConfig.maxCourts) {
+          const currentCourts = await prisma.court.count({
+            where: {
+              venueId,
+              sportType: existingConfig.sportType,
+              isActive: true,
+            },
+          });
+
+          if (currentCourts > maxCourtsNum) {
+            errorResponse(
+              res,
+              `Cannot reduce max courts to ${maxCourtsNum}. Currently ${currentCourts} active courts exist.`,
+              400
+            );
+            return;
+          }
+        }
+
+        updateData.maxCourts = maxCourtsNum;
+      }
+
+      if (isActive !== undefined) {
+        updateData.isActive = Boolean(isActive);
+      }
+
+      // Only update if there's data to update
+      if (Object.keys(updateData).length === 0) {
+        errorResponse(res, "No valid fields to update", 400);
+        return;
       }
 
       // Update sports configuration
       const updatedConfig = await prisma.venueSportsConfig.update({
         where: { id: sportId },
-        data: {
-          ...(maxCourts && { maxCourts }),
-          ...(isActive !== undefined && { isActive }),
+        data: updateData,
+        include: {
+          venue: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       });
 
-      successResponse(res, updatedConfig, "Sport configuration updated successfully");
+      successResponse(
+        res,
+        updatedConfig,
+        "Sport configuration updated successfully"
+      );
     } catch (error: any) {
       logger.error("Error updating sport configuration:", error);
-      errorResponse(res, error.message || "Error updating sport configuration", 400);
+      errorResponse(
+        res,
+        error.message || "Error updating sport configuration",
+        400
+      );
     }
   }
 
@@ -243,21 +367,33 @@ export class VenueSportsController {
     try {
       const venueId = Number(req.params.id);
 
-      if (isNaN(venueId)) {
+      if (isNaN(venueId) || venueId <= 0) {
         errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
+      // Check if venue exists
+      const venue = await prisma.venue.findUnique({
+        where: { id: venueId },
+      });
+
+      if (!venue) {
+        errorResponse(res, "Venue not found", 404);
+        return;
+      }
       const sportsConfigs = await prisma.venueSportsConfig.findMany({
         where: { venueId },
         include: {
           venue: {
-            include: {
-              courts: {
-                where: {
-                  isActive: true,
-                },
-              },
+            select: {
+              id: true,
+              name: true,
+              location: true,
+            },
+          },
+          _count: {
+            select: {
+              courts: true, 
             },
           },
         },
@@ -266,7 +402,31 @@ export class VenueSportsController {
         },
       });
 
-      successResponse(res, sportsConfigs, "Venue sports retrieved successfully");
+      // Add computed fields with active court counts
+      const enrichedConfigs = await Promise.all(
+        sportsConfigs.map(async (config) => {
+          const activeCourts = await prisma.court.count({
+            where: {
+              venueId,
+              sportType: config.sportType,
+              isActive: true,
+            },
+          });
+
+          return {
+            ...config,
+            activeCourtsCount: activeCourts,
+            remainingCourts: config.maxCourts - activeCourts,
+            canAddMoreCourts: activeCourts < config.maxCourts,
+          };
+        })
+      );
+
+      successResponse(
+        res,
+        enrichedConfigs,
+        "Venue sports retrieved successfully"
+      );
     } catch (error: any) {
       logger.error("Error getting venue sports:", error);
       errorResponse(res, error.message || "Error retrieving venue sports", 500);
@@ -280,16 +440,40 @@ export class VenueSportsController {
   async addCourtToVenue(req: Request, res: Response): Promise<void> {
     try {
       const venueId = Number(req.params.id);
-      const { name, sportType, pricePerHour, description, timeSlots } = req.body;
+      const { name, sportType, pricePerHour, description, timeSlots } =
+        req.body;
 
-      if (isNaN(venueId)) {
+      if (isNaN(venueId) || venueId <= 0) {
         errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
+      // Validate required fields
+      if (!name || !sportType || pricePerHour === undefined) {
+        errorResponse(
+          res,
+          "Name, sport type, and price per hour are required",
+          400
+        );
+        return;
+      }
+
       // Validate sport type
-      if (!Object.values(SportType).includes(sportType)) {
-        errorResponse(res, "Invalid sport type", 400);
+      if (!Object.values(SportType).includes(sportType as SportType)) {
+        errorResponse(
+          res,
+          `Invalid sport type. Must be one of: ${Object.values(SportType).join(
+            ", "
+          )}`,
+          400
+        );
+        return;
+      }
+
+      // Validate price
+      const price = Number(pricePerHour);
+      if (isNaN(price) || price < 0) {
+        errorResponse(res, "Price per hour must be a non-negative number", 400);
         return;
       }
 
@@ -303,18 +487,32 @@ export class VenueSportsController {
         return;
       }
 
+      if (!venue.isActive) {
+        errorResponse(res, "Cannot add courts to inactive venue", 400);
+        return;
+      }
+
       // Check if sport is configured for this venue
       const sportsConfig = await prisma.venueSportsConfig.findUnique({
         where: {
           venueId_sportType: {
             venueId,
-            sportType,
+            sportType: sportType as SportType,
           },
         },
       });
 
       if (!sportsConfig) {
-        errorResponse(res, "Sport not configured for this venue", 400);
+        errorResponse(
+          res,
+          `Sport ${sportType} is not configured for this venue. Please add the sport configuration first.`,
+          400
+        );
+        return;
+      }
+
+      if (!sportsConfig.isActive) {
+        errorResponse(res, "Sport configuration is inactive", 400);
         return;
       }
 
@@ -322,7 +520,7 @@ export class VenueSportsController {
       const currentCourts = await prisma.court.count({
         where: {
           venueId,
-          sportType,
+          sportType: sportType as SportType,
           isActive: true,
         },
       });
@@ -330,7 +528,7 @@ export class VenueSportsController {
       if (currentCourts >= sportsConfig.maxCourts) {
         errorResponse(
           res,
-          `Maximum courts (${sportsConfig.maxCourts}) reached for ${sportType}`,
+          `Maximum courts (${sportsConfig.maxCourts}) reached for ${sportType}. Current active courts: ${currentCourts}`,
           400
         );
         return;
@@ -343,31 +541,50 @@ export class VenueSportsController {
       }
 
       // Validate each time slot
-      for (const slot of timeSlots) {
+      for (const [index, slot] of timeSlots.entries()) {
         if (
           typeof slot.dayOfWeek !== "number" ||
           slot.dayOfWeek < 0 ||
           slot.dayOfWeek > 6
         ) {
-          errorResponse(res, "Invalid day of week in time slots", 400);
+          errorResponse(
+            res,
+            `Invalid day of week in time slot ${index + 1}`,
+            400
+          );
           return;
         }
 
         if (!slot.startTime || !slot.endTime) {
-          errorResponse(res, "Start time and end time are required for all slots", 400);
+          errorResponse(
+            res,
+            `Start time and end time are required for time slot ${index + 1}`,
+            400
+          );
           return;
         }
 
         // Validate time format (HH:MM)
         const timeFormat = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        if (!timeFormat.test(slot.startTime) || !timeFormat.test(slot.endTime)) {
-          errorResponse(res, "Invalid time format. Use HH:MM format", 400);
+        if (
+          !timeFormat.test(slot.startTime) ||
+          !timeFormat.test(slot.endTime)
+        ) {
+          errorResponse(
+            res,
+            `Invalid time format in time slot ${index + 1}. Use HH:MM format`,
+            400
+          );
           return;
         }
 
         // Check if end time is after start time
         if (slot.startTime >= slot.endTime) {
-          errorResponse(res, "End time must be after start time", 400);
+          errorResponse(
+            res,
+            `End time must be after start time in time slot ${index + 1}`,
+            400
+          );
           return;
         }
       }
@@ -377,11 +594,12 @@ export class VenueSportsController {
         // Create court
         const court = await tx.court.create({
           data: {
-            name,
-            sportType,
-            description,
+            name: name.trim(),
+            sportType: sportType as SportType,
+            description: description ? description.trim() : null,
             venueId,
-            pricePerHour: Number(pricePerHour),
+            pricePerHour: price,
+            isActive: true,
           },
         });
 
@@ -394,6 +612,7 @@ export class VenueSportsController {
                 dayOfWeek: slot.dayOfWeek,
                 startTime: slot.startTime,
                 endTime: slot.endTime,
+                isActive: true,
               },
             })
           )
@@ -405,9 +624,36 @@ export class VenueSportsController {
         };
       });
 
+      logger.info("Court added successfully:", {
+        courtId: result.id,
+        venueId,
+        sportType,
+      });
       successResponse(res, result, "Court added successfully", 201);
     } catch (error: any) {
-      logger.error("Error adding court to venue:", error);
+      logger.error("Error adding court to venue:", {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        venueId: req.params.id,
+        body: req.body,
+      });
+
+      // Handle specific errors
+      if (error.code === "P2002") {
+        errorResponse(
+          res,
+          "A court with this name already exists in this venue",
+          409
+        );
+        return;
+      }
+
+      if (error.code === "P2003") {
+        errorResponse(res, "Invalid venue reference", 400);
+        return;
+      }
+
       errorResponse(res, error.message || "Error adding court to venue", 400);
     }
   }
@@ -421,15 +667,28 @@ export class VenueSportsController {
       const venueId = Number(req.params.id);
       const { sportType } = req.query;
 
-      if (isNaN(venueId)) {
+      if (isNaN(venueId) || venueId <= 0) {
         errorResponse(res, "Invalid venue ID", 400);
         return;
       }
 
+      // Check if venue exists
+      const venue = await prisma.venue.findUnique({
+        where: { id: venueId },
+      });
+
+      if (!venue) {
+        errorResponse(res, "Venue not found", 404);
+        return;
+      }
+
       const where: any = { venueId };
-      
-      if (sportType && Object.values(SportType).includes(sportType as SportType)) {
-        where.sportType = sportType;
+
+      if (
+        sportType &&
+        Object.values(SportType).includes(sportType as SportType)
+      ) {
+        where.sportType = sportType as SportType;
       }
 
       const courts = await prisma.court.findMany({
@@ -437,10 +696,7 @@ export class VenueSportsController {
         include: {
           timeSlots: {
             where: { isActive: true },
-            orderBy: [
-              { dayOfWeek: "asc" },
-              { startTime: "asc" },
-            ],
+            orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
           },
           _count: {
             select: {
@@ -476,7 +732,7 @@ export class VenueSportsController {
       const courtId = Number(req.params.courtId);
       const { name, pricePerHour, description, isActive } = req.body;
 
-      if (isNaN(venueId) || isNaN(courtId)) {
+      if (isNaN(venueId) || isNaN(courtId) || venueId <= 0 || courtId <= 0) {
         errorResponse(res, "Invalid venue ID or court ID", 400);
         return;
       }
@@ -502,26 +758,52 @@ export class VenueSportsController {
 
       // If deactivating court, check for active bookings
       if (isActive === false && existingCourt.bookings.length > 0) {
-        errorResponse(
-          res,
-          "Cannot deactivate court with active bookings",
-          400
-        );
+        errorResponse(res, "Cannot deactivate court with active bookings", 400);
+        return;
+      }
+
+      // Prepare update data
+      const updateData: any = {};
+
+      if (name !== undefined) {
+        updateData.name = name.trim();
+      }
+
+      if (pricePerHour !== undefined) {
+        const price = Number(pricePerHour);
+        if (isNaN(price) || price < 0) {
+          errorResponse(
+            res,
+            "Price per hour must be a non-negative number",
+            400
+          );
+          return;
+        }
+        updateData.pricePerHour = price;
+      }
+
+      if (description !== undefined) {
+        updateData.description = description ? description.trim() : null;
+      }
+
+      if (isActive !== undefined) {
+        updateData.isActive = Boolean(isActive);
+      }
+
+      // Only update if there's data to update
+      if (Object.keys(updateData).length === 0) {
+        errorResponse(res, "No valid fields to update", 400);
         return;
       }
 
       // Update court
       const updatedCourt = await prisma.court.update({
         where: { id: courtId },
-        data: {
-          ...(name && { name }),
-          ...(pricePerHour && { pricePerHour: Number(pricePerHour) }),
-          ...(description !== undefined && { description }),
-          ...(isActive !== undefined && { isActive }),
-        },
+        data: updateData,
         include: {
           timeSlots: {
             where: { isActive: true },
+            orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
           },
         },
       });
@@ -542,7 +824,7 @@ export class VenueSportsController {
       const venueId = Number(req.params.id);
       const courtId = Number(req.params.courtId);
 
-      if (isNaN(venueId) || isNaN(courtId)) {
+      if (isNaN(venueId) || isNaN(courtId) || venueId <= 0 || courtId <= 0) {
         errorResponse(res, "Invalid venue ID or court ID", 400);
         return;
       }
@@ -575,7 +857,7 @@ export class VenueSportsController {
         });
         successResponse(res, null, "Court deactivated (has existing bookings)");
       } else {
-        // Delete court and associated time slots
+        // Delete court and associated time slots in transaction
         await prisma.$transaction([
           prisma.timeSlot.deleteMany({
             where: { courtId },
@@ -602,7 +884,7 @@ export class VenueSportsController {
       const courtId = Number(req.params.courtId);
       const { dayOfWeek, startTime, endTime } = req.body;
 
-      if (isNaN(venueId) || isNaN(courtId)) {
+      if (isNaN(venueId) || isNaN(courtId) || venueId <= 0 || courtId <= 0) {
         errorResponse(res, "Invalid venue ID or court ID", 400);
         return;
       }
@@ -617,9 +899,19 @@ export class VenueSportsController {
         return;
       }
 
+      if (!court.isActive) {
+        errorResponse(res, "Cannot add time slots to inactive court", 400);
+        return;
+      }
+
       // Validate input
-      if (dayOfWeek < 0 || dayOfWeek > 6) {
-        errorResponse(res, "Invalid day of week", 400);
+      if (typeof dayOfWeek !== "number" || dayOfWeek < 0 || dayOfWeek > 6) {
+        errorResponse(res, "Invalid day of week (must be 0-6)", 400);
+        return;
+      }
+
+      if (!startTime || !endTime) {
+        errorResponse(res, "Start time and end time are required", 400);
         return;
       }
 
@@ -639,6 +931,7 @@ export class VenueSportsController {
         where: {
           courtId,
           dayOfWeek,
+          isActive: true,
           OR: [
             {
               AND: [
@@ -663,7 +956,11 @@ export class VenueSportsController {
       });
 
       if (conflictingSlot) {
-        errorResponse(res, "Time slot conflicts with existing slot", 400);
+        errorResponse(
+          res,
+          `Time slot conflicts with existing slot: ${conflictingSlot.startTime}-${conflictingSlot.endTime}`,
+          400
+        );
         return;
       }
 
@@ -674,6 +971,7 @@ export class VenueSportsController {
           dayOfWeek,
           startTime,
           endTime,
+          isActive: true,
         },
       });
 
@@ -695,7 +993,14 @@ export class VenueSportsController {
       const slotId = Number(req.params.slotId);
       const { dayOfWeek, startTime, endTime, isActive } = req.body;
 
-      if (isNaN(venueId) || isNaN(courtId) || isNaN(slotId)) {
+      if (
+        isNaN(venueId) ||
+        isNaN(courtId) ||
+        isNaN(slotId) ||
+        venueId <= 0 ||
+        courtId <= 0 ||
+        slotId <= 0
+      ) {
         errorResponse(res, "Invalid venue ID, court ID, or slot ID", 400);
         return;
       }
@@ -734,15 +1039,112 @@ export class VenueSportsController {
         return;
       }
 
+      // Prepare update data
+      const updateData: any = {};
+
+      if (dayOfWeek !== undefined) {
+        if (typeof dayOfWeek !== "number" || dayOfWeek < 0 || dayOfWeek > 6) {
+          errorResponse(res, "Invalid day of week (must be 0-6)", 400);
+          return;
+        }
+        updateData.dayOfWeek = dayOfWeek;
+      }
+
+      if (startTime !== undefined) {
+        const timeFormat = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeFormat.test(startTime)) {
+          errorResponse(
+            res,
+            "Invalid start time format. Use HH:MM format",
+            400
+          );
+          return;
+        }
+        updateData.startTime = startTime;
+      }
+
+      if (endTime !== undefined) {
+        const timeFormat = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeFormat.test(endTime)) {
+          errorResponse(res, "Invalid end time format. Use HH:MM format", 400);
+          return;
+        }
+        updateData.endTime = endTime;
+      }
+
+      // Validate that end time is after start time
+      const finalStartTime = updateData.startTime || existingSlot.startTime;
+      const finalEndTime = updateData.endTime || existingSlot.endTime;
+
+      if (finalStartTime >= finalEndTime) {
+        errorResponse(res, "End time must be after start time", 400);
+        return;
+      }
+
+      if (isActive !== undefined) {
+        updateData.isActive = Boolean(isActive);
+      }
+
+      // Only update if there's data to update
+      if (Object.keys(updateData).length === 0) {
+        errorResponse(res, "No valid fields to update", 400);
+        return;
+      }
+
+      // Check for conflicts if time or day is being changed
+      if (
+        updateData.dayOfWeek !== undefined ||
+        updateData.startTime !== undefined ||
+        updateData.endTime !== undefined
+      ) {
+        const checkDayOfWeek =
+          updateData.dayOfWeek !== undefined
+            ? updateData.dayOfWeek
+            : existingSlot.dayOfWeek;
+
+        const conflictingSlot = await prisma.timeSlot.findFirst({
+          where: {
+            courtId,
+            dayOfWeek: checkDayOfWeek,
+            isActive: true,
+            id: { not: slotId }, // Exclude current slot
+            OR: [
+              {
+                AND: [
+                  { startTime: { lte: finalStartTime } },
+                  { endTime: { gt: finalStartTime } },
+                ],
+              },
+              {
+                AND: [
+                  { startTime: { lt: finalEndTime } },
+                  { endTime: { gte: finalEndTime } },
+                ],
+              },
+              {
+                AND: [
+                  { startTime: { gte: finalStartTime } },
+                  { endTime: { lte: finalEndTime } },
+                ],
+              },
+            ],
+          },
+        });
+
+        if (conflictingSlot) {
+          errorResponse(
+            res,
+            `Time slot conflicts with existing slot: ${conflictingSlot.startTime}-${conflictingSlot.endTime}`,
+            400
+          );
+          return;
+        }
+      }
+
       // Update time slot
       const updatedSlot = await prisma.timeSlot.update({
         where: { id: slotId },
-        data: {
-          ...(dayOfWeek !== undefined && { dayOfWeek }),
-          ...(startTime && { startTime }),
-          ...(endTime && { endTime }),
-          ...(isActive !== undefined && { isActive }),
-        },
+        data: updateData,
       });
 
       successResponse(res, updatedSlot, "Time slot updated successfully");
@@ -762,7 +1164,14 @@ export class VenueSportsController {
       const courtId = Number(req.params.courtId);
       const slotId = Number(req.params.slotId);
 
-      if (isNaN(venueId) || isNaN(courtId) || isNaN(slotId)) {
+      if (
+        isNaN(venueId) ||
+        isNaN(courtId) ||
+        isNaN(slotId) ||
+        venueId <= 0 ||
+        courtId <= 0 ||
+        slotId <= 0
+      ) {
         errorResponse(res, "Invalid venue ID, court ID, or slot ID", 400);
         return;
       }
@@ -798,7 +1207,11 @@ export class VenueSportsController {
           where: { id: slotId },
           data: { isActive: false },
         });
-        successResponse(res, null, "Time slot deactivated (has existing bookings)");
+        successResponse(
+          res,
+          null,
+          "Time slot deactivated (has existing bookings)"
+        );
       } else {
         // Delete time slot
         await prisma.timeSlot.delete({

@@ -109,7 +109,7 @@ export class AdminVenueController {
   }
 
   /**
-   * Create new venue
+   * Create new venue - FIXED to handle optional fields properly
    * @route POST /api/admin/venues
    */
   async createVenue(req: Request, res: Response): Promise<void> {
@@ -129,9 +129,57 @@ export class AdminVenueController {
         images,
       } = req.body;
 
-      if (images && images.length > 0) {
+      // Log the incoming request data for debugging
+      logger.info("Creating venue with data:", {
+        name,
+        description,
+        location,
+        latitude,
+        longitude,
+        contactPhone,
+        contactEmail,
+        venueType,
+        societyId,
+        services,
+        amenities,
+        images,
+      });
+
+      // Validate required fields
+      if (!name || !location || !venueType) {
+        errorResponse(res, "Name, location, and venue type are required", 400);
+        return;
+      }
+
+      // Validate venue type
+      if (!Object.values(VenueType).includes(venueType as VenueType)) {
+        errorResponse(res, `Invalid venue type. Must be one of: ${Object.values(VenueType).join(', ')}`, 400);
+        return;
+      }
+
+      // Validate society if provided
+      if (societyId !== null && societyId !== undefined && societyId !== '') {
+        const societyIdNum = parseInt(societyId);
+        if (isNaN(societyIdNum) || societyIdNum <= 0) {
+          errorResponse(res, "Society ID must be a positive integer", 400);
+          return;
+        }
+
+        const society = await prisma.society.findUnique({
+          where: { id: societyIdNum },
+        });
+
+        if (!society) {
+          errorResponse(res, "Society not found", 404);
+          return;
+        }
+      }
+
+      // Validate images if provided
+      if (images && Array.isArray(images) && images.length > 0) {
         const invalidImage = images.find(
           (img: { imageUrl: string; isDefault: any }) =>
+            !img.imageUrl ||
             typeof img.imageUrl !== "string" ||
             img.imageUrl.trim() === "" ||
             typeof img.isDefault !== "boolean"
@@ -140,28 +188,77 @@ export class AdminVenueController {
         if (invalidImage) {
           errorResponse(
             res,
-            "Each image must have a valid 'imageUrl' and 'isDefault' boolean",
+            "Each image must have a valid 'imageUrl' string and 'isDefault' boolean",
             400
           );
           return;
         }
       }
 
+      // Prepare data for Prisma create
+      const venueData: any = {
+        name: name.trim(),
+        location: location.trim(),
+        venueType: venueType as VenueType,
+      };
+
+      // Add optional fields only if they have values
+      if (description && description.trim()) {
+        venueData.description = description.trim();
+      }
+
+      if (latitude !== null && latitude !== undefined && latitude !== '') {
+        const lat = parseFloat(latitude);
+        if (!isNaN(lat)) {
+          venueData.latitude = lat;
+        }
+      }
+
+      if (longitude !== null && longitude !== undefined && longitude !== '') {
+        const lng = parseFloat(longitude);
+        if (!isNaN(lng)) {
+          venueData.longitude = lng;
+        }
+      }
+
+      if (contactPhone && contactPhone.trim()) {
+        venueData.contactPhone = contactPhone.trim();
+      }
+
+      if (contactEmail && contactEmail.trim()) {
+        venueData.contactEmail = contactEmail.trim();
+      }
+
+      if (societyId !== null && societyId !== undefined && societyId !== '') {
+        const societyIdNum = parseInt(societyId);
+        if (!isNaN(societyIdNum) && societyIdNum > 0) {
+          venueData.societyId = societyIdNum;
+        }
+      }
+
+      // Handle array fields safely
+      if (services && Array.isArray(services) && services.length > 0) {
+        venueData.services = { set: services.filter(s => s && s.trim()) };
+      }
+
+      if (amenities && Array.isArray(amenities) && amenities.length > 0) {
+        venueData.amenities = { set: amenities.filter(a => a && a.trim()) };
+      }
+
+      // Handle images
+      if (images && Array.isArray(images) && images.length > 0) {
+        venueData.images = { 
+          create: images.map(img => ({
+            imageUrl: img.imageUrl.trim(),
+            isDefault: Boolean(img.isDefault)
+          }))
+        };
+      }
+
+      logger.info("Final venue data for Prisma:", venueData);
+
       const venue = await prisma.venue.create({
-        data: {
-          name,
-          description,
-          location,
-          latitude: latitude ? Number(latitude) : null,
-          longitude: longitude ? Number(longitude) : null,
-          contactPhone,
-          contactEmail,
-          venueType,
-          societyId: societyId ? Number(societyId) : null,
-          services: { set: services },
-          amenities: { set: amenities },
-          images: { create: images },
-        },
+        data: venueData,
         include: {
           society: {
             select: { id: true, name: true },
@@ -178,23 +275,46 @@ export class AdminVenueController {
 
       const formattedVenue = {
         ...venue,
-        images: venue.images.map((img) => img.imageUrl),
-        services: venue.services.map((s) => formatEnum(s)),
-        amenities: venue.amenities.map((a) => formatEnum(a)),
+        images: venue.images?.map((img) => img.imageUrl) || [],
+        services: venue.services?.map((s) => formatEnum(s)) || [],
+        amenities: venue.amenities?.map((a) => formatEnum(a)) || [],
         availableSports: [
-          ...new Set(venue.courts?.map((c) => formatEnum(c.sportType)) ?? []),
+          ...new Set(venue.courts?.map((c) => formatEnum(c.sportType)) || []),
         ],
       };
 
+      logger.info("Venue created successfully:", { id: venue.id, name: venue.name });
       successResponse(res, formattedVenue, "Venue created successfully", 201);
     } catch (error: any) {
-      logger.error("Error creating venue:", error);
+      logger.error("Error creating venue:", {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        meta: error.meta,
+      });
+
+      // Handle specific Prisma errors
+      if (error.code === 'P2002') {
+        errorResponse(res, "A venue with this name already exists at this location", 409);
+        return;
+      }
+
+      if (error.code === 'P2003') {
+        errorResponse(res, "Invalid reference to society or other related entity", 400);
+        return;
+      }
+
+      if (error.message?.includes('kind')) {
+        errorResponse(res, "Invalid data type provided. Please check your input values.", 400);
+        return;
+      }
+
       errorResponse(res, error.message || "Error creating venue", 400);
     }
   }
 
   /**
-   * Update venue
+   * Update venue - FIXED to handle optional fields properly
    * @route PUT /api/admin/venues/:id
    */
   async updateVenue(req: Request, res: Response): Promise<void> {
@@ -228,15 +348,22 @@ export class AdminVenueController {
         return;
       }
 
+      // Validate venue type if provided
       if (venueType && !Object.values(VenueType).includes(venueType)) {
-        errorResponse(res, "Invalid venue type", 400);
+        errorResponse(res, `Invalid venue type. Must be one of: ${Object.values(VenueType).join(', ')}`, 400);
         return;
       }
 
-      // Fixed validation logic for society
-      if (societyId !== undefined && societyId !== null) {
+      // Validate society if provided
+      if (societyId !== undefined && societyId !== null && societyId !== '') {
+        const societyIdNum = parseInt(societyId);
+        if (isNaN(societyIdNum) || societyIdNum <= 0) {
+          errorResponse(res, "Society ID must be a positive integer", 400);
+          return;
+        }
+
         const society = await prisma.society.findUnique({
-          where: { id: Number(societyId) },
+          where: { id: societyIdNum },
         });
 
         if (!society) {
@@ -245,20 +372,75 @@ export class AdminVenueController {
         }
       }
 
+      // Prepare update data - only include fields that are provided
+      const updateData: any = {};
+
+      if (name !== undefined) {
+        updateData.name = name.trim();
+      }
+
+      if (description !== undefined) {
+        updateData.description = description ? description.trim() : null;
+      }
+
+      if (location !== undefined) {
+        updateData.location = location.trim();
+      }
+
+      if (latitude !== undefined) {
+        if (latitude === null || latitude === '') {
+          updateData.latitude = null;
+        } else {
+          const lat = parseFloat(latitude);
+          if (!isNaN(lat)) {
+            updateData.latitude = lat;
+          }
+        }
+      }
+
+      if (longitude !== undefined) {
+        if (longitude === null || longitude === '') {
+          updateData.longitude = null;
+        } else {
+          const lng = parseFloat(longitude);
+          if (!isNaN(lng)) {
+            updateData.longitude = lng;
+          }
+        }
+      }
+
+      if (contactPhone !== undefined) {
+        updateData.contactPhone = contactPhone ? contactPhone.trim() : null;
+      }
+
+      if (contactEmail !== undefined) {
+        updateData.contactEmail = contactEmail ? contactEmail.trim() : null;
+      }
+
+      if (venueType !== undefined) {
+        updateData.venueType = venueType;
+      }
+
+      if (societyId !== undefined) {
+        if (societyId === null || societyId === '') {
+          updateData.societyId = null;
+        } else {
+          const societyIdNum = parseInt(societyId);
+          if (!isNaN(societyIdNum) && societyIdNum > 0) {
+            updateData.societyId = societyIdNum;
+          }
+        }
+      }
+
+      if (isActive !== undefined) {
+        updateData.isActive = Boolean(isActive);
+      }
+
+      logger.info("Updating venue with data:", updateData);
+
       const venue = await prisma.venue.update({
         where: { id: venueId },
-        data: {
-          name,
-          description,
-          location,
-          latitude: latitude ? Number(latitude) : undefined,
-          longitude: longitude ? Number(longitude) : undefined,
-          contactPhone,
-          contactEmail,
-          venueType,
-          societyId: societyId ? Number(societyId) : null,
-          isActive,
-        },
+        data: updateData,
         include: {
           society: {
             select: {
@@ -287,7 +469,29 @@ export class AdminVenueController {
 
       successResponse(res, venue, "Venue updated successfully");
     } catch (error: any) {
-      logger.error("Error updating venue:", error);
+      logger.error("Error updating venue:", {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        meta: error.meta,
+      });
+
+      // Handle specific Prisma errors
+      if (error.code === 'P2002') {
+        errorResponse(res, "A venue with this name already exists at this location", 409);
+        return;
+      }
+
+      if (error.code === 'P2003') {
+        errorResponse(res, "Invalid reference to society or other related entity", 400);
+        return;
+      }
+
+      if (error.message?.includes('kind')) {
+        errorResponse(res, "Invalid data type provided. Please check your input values.", 400);
+        return;
+      }
+
       errorResponse(res, error.message || "Error updating venue", 400);
     }
   }
@@ -396,7 +600,7 @@ export class AdminVenueController {
               createdAt: "asc",
             },
           },
-          images: true, // Include all images
+          images: true,
           venueUserAccess: {
             include: {
               user: {
@@ -415,6 +619,7 @@ export class AdminVenueController {
         errorResponse(res, "Venue not found", 404);
         return;
       }
+
       const venueWithServices = {
         ...venue,
         services: venue?.services ?? [],
@@ -562,6 +767,8 @@ export class AdminVenueController {
 }
 
 export default new AdminVenueController();
+
+// Helper function to format enum values
 function formatEnum(value: string): string {
   return value
     .toLowerCase()
@@ -569,4 +776,3 @@ function formatEnum(value: string): string {
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
-

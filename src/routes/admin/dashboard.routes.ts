@@ -6,15 +6,10 @@ import { validate } from '../../middlewares/validate.middleware';
 
 const router = express.Router();
 
-// All routes require authentication and admin access
 router.use(authenticate);
 router.use(adminOnly);
 
-// Dashboard statistics route
-router.get('/stats', adminDashboardController.getStats);
-
-// Booking statistics route
-const dateValidation = [
+const dateAndVenueValidation = [
   query('fromDate')
     .optional()
     .isISO8601()
@@ -22,23 +17,57 @@ const dateValidation = [
   query('toDate')
     .optional()
     .isISO8601()
-    .withMessage('To date must be a valid ISO date')
+    .withMessage('To date must be a valid ISO date'),
+  query('venueId')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Venue ID must be a positive integer')
+];
+
+// Main dashboard analytics endpoint
+router.get(
+  '/analytics',
+  validate(dateAndVenueValidation),
+  adminDashboardController.getDashboardAnalytics
+);
+
+// Revenue analytics with grouping support
+const revenueAnalyticsValidation = [
+  ...dateAndVenueValidation,
+  query('groupBy')
+    .optional()
+    .isIn(['hour', 'day', 'week', 'month'])
+    .withMessage('Group by must be one of: hour, day, week, month')
 ];
 
 router.get(
+  '/revenue-analytics',
+  validate(revenueAnalyticsValidation),
+  adminDashboardController.getRevenueAnalytics
+);
+
+// Booking statistics endpoint
+router.get(
+  '/booking-statistics',
+  validate(dateAndVenueValidation),
+  adminDashboardController.getBookingStatistics
+);
+
+// Legacy endpoints for backward compatibility
+router.get('/stats', adminDashboardController.getStats);
+
+router.get(
   '/booking-stats',
-  validate(dateValidation),
+  validate(dateAndVenueValidation),
   adminDashboardController.getBookingStats
 );
 
-// Revenue statistics route
 router.get(
   '/revenue-stats',
-  validate(dateValidation),
+  validate(dateAndVenueValidation),
   adminDashboardController.getRevenueStats
 );
 
-// User statistics route
 router.get('/user-stats', adminDashboardController.getUserStats);
 
 export default router;

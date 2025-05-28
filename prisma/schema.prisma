@@ -90,6 +90,8 @@ model Venue {
   sportsConfig    VenueSportsConfig[]
 
   User User[] @relation("VenueUserAccess")
+
+  Holiday Holiday[]
 }
 
 enum ServiceType {
@@ -215,8 +217,26 @@ model VenueSportsConfig {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   venue     Venue     @relation(fields: [venueId], references: [id])
+  courts    Court[]   @relation("VenueSportsCourts")
 
   @@unique([venueId, sportType])
+}
+
+model Holiday {
+  id          Int      @id @default(autoincrement())
+  name        String
+  date        DateTime @db.Date
+  venueId     Int?
+  isActive    Boolean  @default(true)
+  multiplier  Float    @default(1.5)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  venue       Venue?   @relation(fields: [venueId], references: [id])
+
+  @@index([date])
+  @@index([venueId])
+  @@index([isActive])
 }
 
 model VenueUserAccess {
@@ -228,6 +248,7 @@ model VenueUserAccess {
   venue       Venue    @relation(fields: [venueId], references: [id])
   user        User     @relation(fields: [userId], references: [id])
 
+  // isActive
   @@unique([venueId, userId])
 }
 
@@ -257,6 +278,8 @@ model Court {
   venue        Venue      @relation(fields: [venueId], references: [id])
   bookings     Booking[]
   timeSlots    TimeSlot[]
+
+  VenueSportsConfig VenueSportsConfig[] @relation("VenueSportsCourts")
 }
 
 enum SportType {

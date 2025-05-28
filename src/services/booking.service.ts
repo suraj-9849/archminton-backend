@@ -53,7 +53,18 @@ interface BulkBookingInput {
 
 export class BookingService {
   async createBooking(userId: number, bookingData: CreateBookingInput) {
-    const court = await prisma.court.findUnique({
+    // ✅ Check if user exists
+    
+    const userExists = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!userExists) {
+      throw new Error("User not found");
+    }
+
+    // ✅ Check if court exists and is active
+    const court = await prisma.court.findFirst({
       where: {
         id: bookingData.courtId,
         isActive: true,
@@ -71,6 +82,7 @@ export class BookingService {
       throw new Error("Court not found or inactive");
     }
 
+    // ✅ Check if time slot exists and matches court
     const timeSlot = await prisma.timeSlot.findFirst({
       where: {
         id: bookingData.timeSlotId,
@@ -83,34 +95,34 @@ export class BookingService {
       throw new Error("Time slot not found or inactive");
     }
 
-    if (court.venue.venueType === "PRIVATE") {
-      if (court.venue.societyId) {
-        const hasMembership = await prisma.societyMember.findUnique({
+    // ✅ Check access for PRIVATE venues
+    if (court.venue.venueType === "PRIVATE" && court.venue.societyId) {
+      const hasMembership = await prisma.societyMember.findUnique({
+        where: {
+          userId_societyId: {
+            userId,
+            societyId: court.venue.societyId,
+          },
+        },
+      });
+
+      if (!hasMembership || !hasMembership.isActive) {
+        const hasVenueAccess = await prisma.venueUserAccess.findUnique({
           where: {
-            userId_societyId: {
+            venueId_userId: {
+              venueId: court.venue.id,
               userId,
-              societyId: court.venue.societyId,
             },
           },
         });
 
-        if (!hasMembership || !hasMembership.isActive) {
-          const hasVenueAccess = await prisma.venueUserAccess.findUnique({
-            where: {
-              venueId_userId: {
-                venueId: court.venue.id,
-                userId,
-              },
-            },
-          });
-
-          if (!hasVenueAccess) {
-            throw new Error("You do not have access to this venue");
-          }
+        if (!hasVenueAccess) {
+          throw new Error("You do not have access to this venue");
         }
       }
     }
 
+    // ✅ Prevent double booking for same date/slot
     const existingBooking = await prisma.booking.findFirst({
       where: {
         courtId: bookingData.courtId,
@@ -126,14 +138,15 @@ export class BookingService {
       throw new Error("This time slot is already booked for the selected date");
     }
 
+    // ✅ Calculate total amount
     let totalAmount = Number(court.pricePerHour);
-
     if (bookingData.addOns && bookingData.addOns.length > 0) {
       for (const addOn of bookingData.addOns) {
         totalAmount += Number(addOn.price) * addOn.quantity;
       }
     }
 
+    // ✅ Create booking + add-ons in a transaction
     const booking = await prisma.$transaction(async (tx) => {
       const newBooking = await tx.booking.create({
         data: {
@@ -149,27 +162,26 @@ export class BookingService {
         },
       });
 
-      if (bookingData.addOns && bookingData.addOns.length > 0) {
-        for (const addOn of bookingData.addOns) {
-          await tx.bookingAddOn.create({
-            data: {
-              bookingId: newBooking.id,
-              addOnType: addOn.addOnType,
-              quantity: addOn.quantity,
-              price: addOn.price,
-            },
-          });
-        }
+      if ((bookingData as any).addOns?.length > 0) {
+        await Promise.all(
+          (bookingData as any).addOns.map(
+            (addOn: { addOnType: any; quantity: any; price: any }) =>
+              tx.bookingAddOn.create({
+                data: {
+                  bookingId: newBooking.id,
+                  addOnType: addOn.addOnType,
+                  quantity: addOn.quantity,
+                  price: addOn.price,
+                },
+              })
+          )
+        );
       }
 
       return tx.booking.findUnique({
         where: { id: newBooking.id },
         include: {
-          court: {
-            include: {
-              venue: true,
-            },
-          },
+          court: { include: { venue: true } },
           timeSlot: true,
           addOns: true,
         },

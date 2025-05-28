@@ -18,7 +18,7 @@ export class BookingController {
         errorResponse(res, 'Unauthorized', 401);
         return;
       }
-
+      console.log("user : ",req.user)
       const { courtId, timeSlotId, bookingDate, addOns } = req.body;
 
       // Validate required fields
@@ -34,6 +34,7 @@ export class BookingController {
         return;
       }
 
+      console.log("user id : ",req.user.userId)
       // Create booking
       const booking = await bookingService.createBooking(req.user.userId, {
         courtId: Number(courtId),

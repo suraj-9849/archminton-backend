@@ -8,13 +8,9 @@ import { VenueType, SportType } from "@prisma/client";
 
 const router = express.Router();
 
-// All routes require authentication and admin access
 router.use(authenticate);
 router.use(adminOnly);
 
-// ================ VENUE MANAGEMENT ROUTES ================
-
-// Get all venues
 const getVenuesValidation = [
   query("page")
     .optional()
@@ -24,7 +20,11 @@ const getVenuesValidation = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage("Limit must be between 1 and 100"),
-  query("search").optional().isString().withMessage("Search must be a string"),
+  query("search")
+    .optional()
+    .isString()
+    .trim()
+    .withMessage("Search must be a string"),
   query("venueType")
     .optional()
     .isIn(Object.values(VenueType))
@@ -41,45 +41,114 @@ router.get(
   adminVenueController.getAllVenues
 );
 
-// Create venue
 const createVenueValidation = [
   body("name")
     .notEmpty()
     .withMessage("Venue name is required")
     .isLength({ min: 2, max: 100 })
-    .withMessage("Name must be between 2 and 100 characters"),
+    .withMessage("Name must be between 2 and 100 characters")
+    .trim(),
   body("location")
     .notEmpty()
     .withMessage("Location is required")
     .isLength({ min: 2, max: 200 })
-    .withMessage("Location must be between 2 and 200 characters"),
-  body("description")
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage("Description must not exceed 500 characters"),
-  body("latitude")
-    .optional()
-    .isFloat({ min: -90, max: 90 })
-    .withMessage("Latitude must be between -90 and 90"),
-  body("longitude")
-    .optional()
-    .isFloat({ min: -180, max: 180 })
-    .withMessage("Longitude must be between -180 and 180"),
-  body("contactPhone")
-    .optional()
-    .isMobilePhone("any")
-    .withMessage("Valid phone number is required"),
-  body("contactEmail")
-    .optional()
-    .isEmail()
-    .withMessage("Valid email is required"),
+    .withMessage("Location must be between 2 and 200 characters")
+    .trim(),
   body("venueType")
+    .notEmpty()
+    .withMessage("Venue type is required")
     .isIn(Object.values(VenueType))
-    .withMessage("Valid venue type is required"),
+    .withMessage(
+      `Valid venue type is required. Must be one of: ${Object.values(
+        VenueType
+      ).join(", ")}`
+    ),
+
+  body("description")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .isLength({ max: 500 })
+    .withMessage("Description must not exceed 500 characters")
+    .trim(),
+  body("latitude")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseFloat(value);
+      if (isNaN(num) || num < -90 || num > 90) {
+        throw new Error("Latitude must be a number between -90 and 90");
+      }
+      return true;
+    }),
+  body("longitude")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseFloat(value);
+      if (isNaN(num) || num < -180 || num > 180) {
+        throw new Error("Longitude must be a number between -180 and 180");
+      }
+      return true;
+    }),
+  body("contactPhone")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      if (typeof value !== "string" || value.trim().length < 10) {
+        throw new Error("Phone number must be at least 10 characters");
+      }
+      return true;
+    }),
+  body("contactEmail")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) {
+        throw new Error("Valid email is required");
+      }
+      return true;
+    }),
   body("societyId")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseInt(value);
+      if (isNaN(num) || num <= 0) {
+        throw new Error("Society ID must be a positive integer");
+      }
+      return true;
+    }),
+
+  body("services")
+    .optional({ nullable: true })
+    .isArray()
+    .withMessage("Services must be an array"),
+  body("services.*")
     .optional()
-    .isInt({ min: 1 })
-    .withMessage("Society ID must be a positive integer"),
+    .isString()
+    .withMessage("Each service must be a string"),
+  body("amenities")
+    .optional({ nullable: true })
+    .isArray()
+    .withMessage("Amenities must be an array"),
+  body("amenities.*")
+    .optional()
+    .isString()
+    .withMessage("Each amenity must be a string"),
+  body("images")
+    .optional({ nullable: true })
+    .isArray()
+    .withMessage("Images must be an array"),
+  body("images.*.imageUrl")
+    .optional()
+    .isString()
+    .isLength({ min: 1 })
+    .withMessage("Image URL is required and must be a valid string"),
+  body("images.*.isDefault")
+    .optional()
+    .isBoolean()
+    .withMessage("isDefault must be a boolean"),
 ];
 
 router.post(
@@ -88,7 +157,6 @@ router.post(
   adminVenueController.createVenue
 );
 
-// Get venue by ID
 const venueIdValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -101,7 +169,6 @@ router.get(
   adminVenueController.getVenueById
 );
 
-// Update venue
 const updateVenueValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -109,43 +176,68 @@ const updateVenueValidation = [
   body("name")
     .optional()
     .isLength({ min: 2, max: 100 })
-    .withMessage("Name must be between 2 and 100 characters"),
+    .withMessage("Name must be between 2 and 100 characters")
+    .trim(),
   body("location")
     .optional()
     .isLength({ min: 2, max: 200 })
-    .withMessage("Location must be between 2 and 200 characters"),
+    .withMessage("Location must be between 2 and 200 characters")
+    .trim(),
   body("description")
-    .optional()
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
     .isLength({ max: 500 })
-    .withMessage("Description must not exceed 500 characters"),
+    .withMessage("Description must not exceed 500 characters")
+    .trim(),
   body("latitude")
-    .optional()
-    .isFloat({ min: -90, max: 90 })
-    .withMessage("Latitude must be between -90 and 90"),
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseFloat(value);
+      if (isNaN(num) || num < -90 || num > 90) {
+        throw new Error("Latitude must be a number between -90 and 90");
+      }
+      return true;
+    }),
   body("longitude")
-    .optional()
-    .isFloat({ min: -180, max: 180 })
-    .withMessage("Longitude must be between -180 and 180"),
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseFloat(value);
+      if (isNaN(num) || num < -180 || num > 180) {
+        throw new Error("Longitude must be a number between -180 and 180");
+      }
+      return true;
+    }),
   body("contactPhone")
-    .optional()
-    .isMobilePhone("any")
-    .withMessage("Valid phone number is required"),
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      if (typeof value !== "string" || value.trim().length < 10) {
+        throw new Error("Phone number must be at least 10 characters");
+      }
+      return true;
+    }),
   body("contactEmail")
-    .optional()
-    .isEmail()
-    .withMessage("Valid email is required"),
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value === null || value === undefined || value === "") return true;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) {
+        throw new Error("Valid email is required");
+      }
+      return true;
+    }),
   body("venueType")
     .optional()
     .isIn(Object.values(VenueType))
     .withMessage("Invalid venue type"),
   body("societyId")
-    .optional()
+    .optional({ nullable: true, checkFalsy: false })
     .custom((value) => {
-      if (value === null || value === undefined || value === "") {
-        return true;
-      }
-      const num = Number(value);
-      if (!Number.isInteger(num) || num <= 0) {
+      if (value === null || value === undefined || value === "") return true;
+      const num = parseInt(value);
+      if (isNaN(num) || num <= 0) {
         throw new Error("Society ID must be a positive integer");
       }
       return true;
@@ -162,16 +254,12 @@ router.put(
   adminVenueController.updateVenue
 );
 
-// Delete venue
 router.delete(
   "/:id",
   validate(venueIdValidation),
   adminVenueController.deleteVenue
 );
 
-// ================ VENUE ACCESS MANAGEMENT ================
-
-// Grant venue access
 const grantAccessValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -187,7 +275,6 @@ router.post(
   adminVenueController.grantVenueAccess
 );
 
-// Revoke venue access
 const revokeAccessValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -203,9 +290,6 @@ router.delete(
   adminVenueController.revokeVenueAccess
 );
 
-// ================ SPORTS CONFIGURATION ROUTES ================
-
-// Add sport to venue
 const addSportValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -224,14 +308,12 @@ router.post(
   venueSportsController.addSportToVenue
 );
 
-// Get venue sports
 router.get(
   "/:id/sports",
   validate(venueIdValidation),
   venueSportsController.getVenueSports
 );
 
-// Update sport configuration
 const updateSportValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -255,7 +337,6 @@ router.put(
   venueSportsController.updateSportConfig
 );
 
-// Remove sport from venue
 const removeSportValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -271,9 +352,6 @@ router.delete(
   venueSportsController.removeSportFromVenue
 );
 
-// ================ COURT MANAGEMENT ROUTES ================
-
-// Add court to venue
 const addCourtValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -282,7 +360,8 @@ const addCourtValidation = [
     .notEmpty()
     .withMessage("Court name is required")
     .isLength({ min: 1, max: 100 })
-    .withMessage("Court name must be between 1 and 100 characters"),
+    .withMessage("Court name must be between 1 and 100 characters")
+    .trim(),
   body("sportType")
     .isIn(Object.values(SportType))
     .withMessage("Valid sport type is required"),
@@ -292,7 +371,8 @@ const addCourtValidation = [
   body("description")
     .optional()
     .isLength({ max: 500 })
-    .withMessage("Description must not exceed 500 characters"),
+    .withMessage("Description must not exceed 500 characters")
+    .trim(),
   body("timeSlots")
     .isArray({ min: 1 })
     .withMessage("At least one time slot is required"),
@@ -313,7 +393,6 @@ router.post(
   venueSportsController.addCourtToVenue
 );
 
-// Get venue courts
 const getCourtsValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -330,7 +409,6 @@ router.get(
   venueSportsController.getVenueCourts
 );
 
-// Update court
 const updateCourtValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -341,7 +419,8 @@ const updateCourtValidation = [
   body("name")
     .optional()
     .isLength({ min: 1, max: 100 })
-    .withMessage("Court name must be between 1 and 100 characters"),
+    .withMessage("Court name must be between 1 and 100 characters")
+    .trim(),
   body("pricePerHour")
     .optional()
     .isFloat({ min: 0 })
@@ -349,7 +428,8 @@ const updateCourtValidation = [
   body("description")
     .optional()
     .isLength({ max: 500 })
-    .withMessage("Description must not exceed 500 characters"),
+    .withMessage("Description must not exceed 500 characters")
+    .trim(),
   body("isActive")
     .optional()
     .isBoolean()
@@ -362,7 +442,6 @@ router.put(
   venueSportsController.updateCourt
 );
 
-// Delete court
 const courtIdValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -378,9 +457,6 @@ router.delete(
   venueSportsController.deleteCourt
 );
 
-// ================ TIME SLOT MANAGEMENT ROUTES ================
-
-// Add time slot to court
 const addTimeSlotValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -405,7 +481,6 @@ router.post(
   venueSportsController.addTimeSlotToCourt
 );
 
-// Update time slot
 const updateTimeSlotValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -440,7 +515,6 @@ router.put(
   venueSportsController.updateTimeSlot
 );
 
-// Delete time slot
 const timeSlotValidation = [
   param("id")
     .isInt({ min: 1 })
