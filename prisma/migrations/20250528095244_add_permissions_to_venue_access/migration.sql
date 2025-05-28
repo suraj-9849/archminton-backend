@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "VenueUserAccess" ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "permissions" TEXT[] DEFAULT ARRAY[]::TEXT[];

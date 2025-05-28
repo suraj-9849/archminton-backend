@@ -11,15 +11,17 @@ export const validate = (validations: ValidationChain[]) => {
     await Promise.all(validations.map(validation => validation.run(req)));
     
     // Check if there are validation errors
-    const errors:any = validationResult(req);
+    const errors = validationResult(req);
     
     if (!errors.isEmpty()) {
+      const errorArray = errors.array();
+      
       res.status(400).json({
         success: false,
         message: 'Validation failed',
-        errors: errors.array().map((error: { path: any; location: any; msg: any; }) => ({
-          field: error.path || (error as any).param || error.location,  
-          message: error.msg
+        errors: errorArray.map((error: any) => ({
+          field: error.path || error.param || error.location || 'unknown',
+          message: error.msg || error.message || 'Validation error'
         }))
       });
       return;

@@ -220,11 +220,13 @@ model VenueSportsConfig {
 }
 
 model VenueUserAccess {
-  id      Int   @id @default(autoincrement())
-  venueId Int
-  userId  Int
-  venue   Venue @relation(fields: [venueId], references: [id])
-  user    User  @relation(fields: [userId], references: [id])
+  id          Int      @id @default(autoincrement())
+  venueId     Int
+  userId      Int
+  permissions String[] @default([])
+  createdAt   DateTime @default(now())
+  venue       Venue    @relation(fields: [venueId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
 
   @@unique([venueId, userId])
 }
