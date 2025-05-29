@@ -5,10 +5,8 @@ import morgan from "morgan";
 import path from "path";
 import dotenv from "dotenv";
 
-// Load environment variables
 dotenv.config();
 
-// Import routes
 import authRoutes from "./routes/auth.routes";
 import userRoutes from "./routes/user.routes";
 import venueRoutes from "./routes/venue.routes";
@@ -16,8 +14,9 @@ import courtRoutes from "./routes/court.routes";
 import bookingRoutes from "./routes/booking.routes";
 import societyRoutes from "./routes/society.routes";
 import courseRoutes from "./routes/course.routes";
+import membershipRequestRoutes from "./routes/membershipRequest.routes";
 
-// Import admin routes
+
 import reportRoutes from "./routes/admin/report.routes";
 import adminDashboardRoutes from "./routes/admin/dashboard.routes";
 import adminUserRoutes from "./routes/admin/user.routes";
@@ -28,22 +27,20 @@ import adminCourtRoutes from "./routes/admin/court.routes";
 import adminBookingRoutes from "./routes/admin/booking.routes";
 import adminCourseRoutes from "./routes/admin/course.routes";
 import adminMembershipRoutes from "./routes/admin/membership.routes";
+import adminMembershipRequestRoutes from "./routes/admin/membershipRequest.routes";
 import { membershipRoutes } from "./routes/membership.routes";
 import adminStaffRoutes from "./routes/admin/staff.routes";
 
 const app = express();
 
-// Define upload path
 const UPLOAD_PATH = path.join(__dirname, "../uploads");
 
-// Express middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.use(helmet());
 app.use(morgan("dev"));
 
-// Static file serving
 app.use("/uploads", express.static(UPLOAD_PATH));
 
 // API Routes
@@ -55,9 +52,11 @@ app.use("/api/bookings", bookingRoutes);
 app.use("/api/societies", societyRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/membership", membershipRoutes);
+app.use("/api/membership-requests", membershipRequestRoutes);
 
 // Admin Routes
 app.use("/api/admin/membership", adminMembershipRoutes);
+app.use("/api/admin/membership-requests", adminMembershipRequestRoutes);
 app.use("/api/admin/dashboard", adminDashboardRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 app.use("/api/admin/venues", adminVenueRoutes);
@@ -84,6 +83,7 @@ app.get("/", (req: Request, res: Response) => {
       courseManagement: true,
       adminDashboard: true,
       roleBasedAccess: true,
+      membershipRequests: true,
     },
   });
 });
@@ -147,6 +147,11 @@ app.get("/api", (req: Request, res: Response) => {
         details: "GET /api/societies/:id",
         members: "GET /api/societies/:id/members",
       },
+      membershipRequests: {
+        create: "POST /api/membership-requests",
+        my: "GET /api/membership-requests",
+        cancel: "DELETE /api/membership-requests/:id",
+      },
       membership: {
         packages: "GET /api/membership/packages",
         details: "GET /api/membership/packages/:id",
@@ -163,6 +168,7 @@ app.get("/api", (req: Request, res: Response) => {
         bookings: "GET /api/admin/bookings",
         courses: "GET /api/admin/courses",
         membership: "GET /api/admin/membership",
+        membershipRequests: "GET /api/admin/membership-requests",
         holidays: "GET /api/admin/holidays",
         staff: "GET /api/admin/staff",
         reports: "GET /api/admin/reports",

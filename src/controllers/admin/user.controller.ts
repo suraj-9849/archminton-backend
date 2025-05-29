@@ -1,14 +1,12 @@
-import { Request, Response } from 'express';
-import { PrismaClient, Role } from '@prisma/client';
-import { successResponse, errorResponse } from '../../utils/response';
-import logger from '../../utils/logger';
-import * as bcrypt from 'bcryptjs';
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+import * as bcrypt from "bcryptjs";
+import { successResponse, errorResponse } from "../../utils/response";
+import logger from "../../utils/logger";
+import societyMembershipRequestService from "../../services/societyMembershipRequest.service";
 
 const prisma = new PrismaClient();
 
-/**
- * Controller for admin user management
- */
 export class AdminUserController {
   /**
    * Get all users with pagination and filters
@@ -16,37 +14,30 @@ export class AdminUserController {
    */
   async getUsers(req: Request, res: Response): Promise<void> {
     try {
-      // Parse query parameters
       const page = Number(req.query.page) || 1;
       const limit = Number(req.query.limit) || 10;
-      const search = req.query.search as string | undefined;
-      const role = req.query.role as Role | undefined;
-      const sortBy = (req.query.sortBy as string) || 'createdAt';
-      const sortOrder = (req.query.sortOrder as string) || 'desc';
+      const search = req.query.search as string;
+      const role = req.query.role as string;
+      const sortBy = (req.query.sortBy as string) || "createdAt";
+      const sortOrder = (req.query.sortOrder as "asc" | "desc") || "desc";
 
-      // Build filter conditions
+      const skip = (page - 1) * limit;
       const where: any = {};
 
-      // Add search filter
+      // Apply search filter
       if (search) {
         where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } }
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
         ];
       }
 
-      // Add role filter
-      if (role && Object.values(Role).includes(role as Role)) {
+      // Apply role filter
+      if (role) {
         where.role = role;
       }
 
-      // Calculate pagination values
-      const skip = (page - 1) * limit;
-
-      // Fetch users with pagination and filters - UPDATED TO INCLUDE MEMBERSHIPS
       const [users, totalUsers] = await Promise.all([
-        // Get users for current page with memberships
         prisma.user.findMany({
           where,
           select: {
@@ -58,85 +49,65 @@ export class AdminUserController {
             role: true,
             createdAt: true,
             updatedAt: true,
-            // ADD MEMBERSHIPS WITH PACKAGE DETAILS
-            UserMembership: {
+            societyMemberships: {
+              where: { isActive: true },
               include: {
-                package: {
+                society: {
                   select: {
                     id: true,
                     name: true,
-                    type: true,
-                    price: true,
-                    durationMonths: true,
-                    credits: true,
-                    maxBookingsPerMonth: true,
-                    allowedSports: true,
-                    isActive: true
-                  }
-                }
+                  },
+                },
               },
-              orderBy: {
-                createdAt: 'desc'
-              }
-            }
-          },
-          orderBy: {
-            [sortBy]: sortOrder
+            },
+            _count: {
+              select: {
+                bookings: true,
+                courseEnrollments: true,
+              },
+            },
           },
           skip,
-          take: limit
+          take: limit,
+          orderBy: { [sortBy]: sortOrder },
         }),
-        
-        // Get total count for pagination
-        prisma.user.count({ where })
+        prisma.user.count({ where }),
       ]);
 
-      // Transform the response to match expected format
-      const transformedUsers = users.map(user => ({
-        ...user,
-        memberships: user.UserMembership || []
-      }));
-
-      // Calculate pagination metadata
       const totalPages = Math.ceil(totalUsers / limit);
-      const hasNext = page < totalPages;
-      const hasPrevious = page > 1;
 
-      successResponse(
-        res,
-        {
-          users: transformedUsers,
-          pagination: {
-            page,
-            limit,
-            totalUsers,
-            totalPages,
-            hasNext,
-            hasPrevious
-          }
+      const response = {
+        users,
+        pagination: {
+          page,
+          limit,
+          totalUsers,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrevious: page > 1,
         },
-        'Users retrieved successfully'
-      );
+      };
+
+      successResponse(res, response, "Users retrieved successfully");
     } catch (error: any) {
-      logger.error('Error getting users:', error);
-      errorResponse(res, error.message || 'Error retrieving users', 500);
+      logger.error("Error getting users:", error);
+      errorResponse(res, error.message || "Error retrieving users", 500);
     }
   }
 
   /**
-   * Get user details by ID including related data
+   * Get user by ID
    * @route GET /api/admin/users/:id
    */
   async getUserById(req: Request, res: Response): Promise<void> {
     try {
       const userId = Number(req.params.id);
-      
+
       if (isNaN(userId)) {
-        errorResponse(res, 'Invalid user ID', 400);
+        errorResponse(res, "Invalid user ID", 400);
         return;
       }
 
-      // Get user with related data - UPDATED TO INCLUDE MEMBERSHIPS
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -148,97 +119,93 @@ export class AdminUserController {
           role: true,
           createdAt: true,
           updatedAt: true,
-          // ADD MEMBERSHIPS
-          UserMembership: {
+          societyMemberships: {
             include: {
-              package: {
+              society: {
                 select: {
                   id: true,
                   name: true,
-                  type: true,
-                  price: true,
-                  durationMonths: true,
-                  credits: true,
-                  maxBookingsPerMonth: true,
-                  allowedSports: true,
-                  isActive: true
-                }
-              }
+                  location: true,
+                },
+              },
             },
-            orderBy: {
-              createdAt: 'desc'
-            }
-          },
-          societyMemberships: {
-            include: {
-              society: true
-            }
           },
           bookings: {
-            take: 10,
-            orderBy: {
-              createdAt: 'desc'
-            },
+            take: 5,
+            orderBy: { createdAt: "desc" },
             include: {
               court: {
                 include: {
-                  venue: true
-                }
+                  venue: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
+                },
               },
-              payment: true
-            }
+            },
           },
           courseEnrollments: {
+            take: 5,
+            orderBy: { createdAt: "desc" },
             include: {
-              course: true
-            }
-          }
-        }
+              course: {
+                select: {
+                  id: true,
+                  name: true,
+                  sportType: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!user) {
-        errorResponse(res, 'User not found', 404);
+        errorResponse(res, "User not found", 404);
         return;
       }
 
-      // Transform the response to match expected format
-      const transformedUser = {
-        ...user,
-        memberships: user.UserMembership || []
-      };
-
-      successResponse(res, transformedUser, 'User details retrieved successfully');
+      successResponse(res, user, "User retrieved successfully");
     } catch (error: any) {
-      logger.error('Error getting user by ID:', error);
-      errorResponse(res, error.message || 'Error retrieving user details', 500);
+      logger.error("Error getting user by ID:", error);
+      errorResponse(res, error.message || "Error retrieving user", 500);
     }
   }
 
-  // ... rest of your methods remain the same (createUser, updateUser, resetPassword, deleteUser)
-  
   /**
-   * Create a new user (admin capability)
+   * Create a new user
    * @route POST /api/admin/users
    */
   async createUser(req: Request, res: Response): Promise<void> {
     try {
-      const { email, password, name, phone, gender, role } = req.body;
+      const { email, password, name, phone, gender, role, selectedSocieties } =
+        req.body;
+
+      console.log("Creating user with data:", {
+        email,
+        name,
+        phone,
+        gender,
+        role,
+        selectedSocieties: selectedSocieties || "none",
+      });
 
       // Check if user already exists
       const existingUser = await prisma.user.findUnique({
-        where: { email }
+        where: { email },
       });
 
       if (existingUser) {
-        errorResponse(res, 'User with this email already exists', 400);
+        errorResponse(res, "User with this email already exists", 400);
         return;
       }
 
       // Hash password
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create new user
+      // Create user
       const newUser = await prisma.user.create({
         data: {
           email,
@@ -246,7 +213,7 @@ export class AdminUserController {
           name,
           phone,
           gender,
-          role: role && Object.values(Role).includes(role) ? role : Role.USER
+          role: role || "USER",
         },
         select: {
           id: true,
@@ -256,14 +223,60 @@ export class AdminUserController {
           gender: true,
           role: true,
           createdAt: true,
-          updatedAt: true
-        }
+          updatedAt: true,
+        },
       });
 
-      successResponse(res, newUser, 'User created successfully', 201);
+      console.log("User created successfully:", newUser);
+
+      // Create membership requests if societies are selected
+      let membershipRequestsResult = null;
+      if (
+        selectedSocieties &&
+        Array.isArray(selectedSocieties) &&
+        selectedSocieties.length > 0
+      ) {
+        try {
+          console.log(
+            "Creating membership requests for societies:",
+            selectedSocieties
+          );
+
+          membershipRequestsResult =
+            await societyMembershipRequestService.createMembershipRequests({
+              userId: newUser.id,
+              societyIds: selectedSocieties,
+            });
+
+          console.log("Membership requests created:", membershipRequestsResult);
+        } catch (membershipError: any) {
+          console.error("Error creating membership requests:", membershipError);
+
+          // Log the error but don't fail user creation
+          logger.warn("Error creating membership requests:", membershipError);
+
+          // You might want to return this error info to the frontend
+          membershipRequestsResult = {
+            error: membershipError.message,
+            created: [],
+            skipped: 0,
+          };
+        }
+      } else {
+        console.log("No societies selected for membership requests");
+      }
+
+      // Return response with user data and membership request info
+      const responseData = {
+        user: newUser,
+        membershipRequests: membershipRequestsResult,
+      };
+
+      successResponse(res, responseData, "User created successfully", 201);
     } catch (error: any) {
-      logger.error('Error creating user:', error);
-      errorResponse(res, error.message || 'Error creating user', 500);
+      console.error("Error creating user:", error);
+      logger.error("Error creating user:", error);
+      errorResponse(res, error.message || "Error creating user", 400);
     }
   }
 
@@ -274,38 +287,29 @@ export class AdminUserController {
   async updateUser(req: Request, res: Response): Promise<void> {
     try {
       const userId = Number(req.params.id);
-      
-      if (isNaN(userId)) {
-        errorResponse(res, 'Invalid user ID', 400);
-        return;
-      }
-
       const { name, phone, gender, role } = req.body;
 
-      // Check if user exists
-      const existingUser = await prisma.user.findUnique({
-        where: { id: userId }
+      if (isNaN(userId)) {
+        errorResponse(res, "Invalid user ID", 400);
+        return;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
       });
 
-      if (!existingUser) {
-        errorResponse(res, 'User not found', 404);
+      if (!user) {
+        errorResponse(res, "User not found", 404);
         return;
       }
 
-      // Prevent changing role for super admin
-      if (existingUser.role === Role.SUPERADMIN && role && role !== Role.SUPERADMIN) {
-        errorResponse(res, 'Cannot change role of super admin', 403);
-        return;
-      }
-
-      // Update user
       const updatedUser = await prisma.user.update({
         where: { id: userId },
         data: {
           name,
           phone,
           gender,
-          role: role && Object.values(Role).includes(role) ? role : undefined
+          role,
         },
         select: {
           id: true,
@@ -315,14 +319,14 @@ export class AdminUserController {
           gender: true,
           role: true,
           createdAt: true,
-          updatedAt: true
-        }
+          updatedAt: true,
+        },
       });
 
-      successResponse(res, updatedUser, 'User updated successfully');
+      successResponse(res, updatedUser, "User updated successfully");
     } catch (error: any) {
-      logger.error('Error updating user:', error);
-      errorResponse(res, error.message || 'Error updating user', 500);
+      logger.error("Error updating user:", error);
+      errorResponse(res, error.message || "Error updating user", 400);
     }
   }
 
@@ -333,92 +337,124 @@ export class AdminUserController {
   async resetPassword(req: Request, res: Response): Promise<void> {
     try {
       const userId = Number(req.params.id);
-      
-      if (isNaN(userId)) {
-        errorResponse(res, 'Invalid user ID', 400);
-        return;
-      }
-
       const { newPassword } = req.body;
 
-      if (!newPassword || newPassword.length < 8) {
-        errorResponse(res, 'New password must be at least 8 characters', 400);
+      if (isNaN(userId)) {
+        errorResponse(res, "Invalid user ID", 400);
         return;
       }
 
-      // Check if user exists
-      const existingUser = await prisma.user.findUnique({
-        where: { id: userId }
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
       });
 
-      if (!existingUser) {
-        errorResponse(res, 'User not found', 404);
+      if (!user) {
+        errorResponse(res, "User not found", 404);
         return;
       }
 
-      // Hash new password
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(newPassword, salt);
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-      // Update user password
       await prisma.user.update({
         where: { id: userId },
-        data: {
-          password: hashedPassword
-        }
+        data: { password: hashedPassword },
       });
 
-      successResponse(res, null, 'Password reset successfully');
+      successResponse(res, null, "Password reset successfully");
     } catch (error: any) {
-      logger.error('Error resetting password:', error);
-      errorResponse(res, error.message || 'Error resetting password', 500);
+      logger.error("Error resetting password:", error);
+      errorResponse(res, error.message || "Error resetting password", 400);
     }
   }
 
   /**
-   * Delete a user (soft delete by deactivating)
+   * Delete a user
    * @route DELETE /api/admin/users/:id
    */
   async deleteUser(req: Request, res: Response): Promise<void> {
     try {
       const userId = Number(req.params.id);
-      
+
       if (isNaN(userId)) {
-        errorResponse(res, 'Invalid user ID', 400);
+        errorResponse(res, "Invalid user ID", 400);
+        return;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        errorResponse(res, "User not found", 404);
+        return;
+      }
+
+      // Check if user has active bookings
+      const activeBookings = await prisma.booking.count({
+        where: {
+          userId,
+          status: { in: ["PENDING", "CONFIRMED"] },
+        },
+      });
+
+      if (activeBookings > 0) {
+        errorResponse(res, "Cannot delete user with active bookings", 400);
+        return;
+      }
+
+      await prisma.user.delete({
+        where: { id: userId },
+      });
+
+      successResponse(res, null, "User deleted successfully");
+    } catch (error: any) {
+      logger.error("Error deleting user:", error);
+      errorResponse(res, error.message || "Error deleting user", 400);
+    }
+  }
+
+  /**
+   * Get user's membership requests
+   * @route GET /api/admin/users/:userId/membership-requests
+   */
+  async getUserMembershipRequests(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = Number(req.params.userId);
+
+      if (isNaN(userId)) {
+        errorResponse(res, "Invalid user ID", 400);
         return;
       }
 
       // Check if user exists
       const user = await prisma.user.findUnique({
-        where: { id: userId }
+        where: { id: userId },
+        select: { id: true, name: true, email: true },
       });
 
       if (!user) {
-        errorResponse(res, 'User not found', 404);
+        errorResponse(res, "User not found", 404);
         return;
       }
 
-      // Prevent deleting super admin
-      if (user.role === Role.SUPERADMIN) {
-        errorResponse(res, 'Cannot delete super admin', 403);
-        return;
-      }
+      const requests =
+        await societyMembershipRequestService.getUserMembershipRequests(userId);
 
-      // Check if it's the current user trying to delete themselves
-      if (req.user && req.user.userId === userId) {
-        errorResponse(res, 'Cannot delete your own account', 403);
-        return;
-      }
-
-      // Delete user (in a real application, consider soft delete)
-      await prisma.user.delete({
-        where: { id: userId }
-      });
-
-      successResponse(res, null, 'User deleted successfully');
+      successResponse(
+        res,
+        {
+          user,
+          requests,
+        },
+        "User membership requests retrieved successfully"
+      );
     } catch (error: any) {
-      logger.error('Error deleting user:', error);
-      errorResponse(res, error.message || 'Error deleting user', 500);
+      logger.error("Error getting user membership requests:", error);
+      errorResponse(
+        res,
+        error.message || "Error retrieving user requests",
+        500
+      );
     }
   }
 }

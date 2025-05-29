@@ -58,6 +58,8 @@ userRouter.post(
   membershipController.purchaseMembership
 );
 
+
+
 const confirmPaymentValidation = [
   param("id")
     .isInt({ min: 1 })

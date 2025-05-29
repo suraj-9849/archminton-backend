@@ -11,6 +11,21 @@ const router = express.Router();
 router.use(authenticate);
 router.use(adminOnly);
 
+// Create membership requests for a specific user (admin only)
+const createForUserValidation = [
+  body('userId')
+    .isInt({ min: 1 })
+    .withMessage('User ID must be a positive integer'),
+  body('societyIds')
+    .isArray({ min: 1 })
+    .withMessage('Society IDs must be a non-empty array'),
+  body('societyIds.*')
+    .isInt({ min: 1 })
+    .withMessage('All society IDs must be positive integers')
+];
+
+router.post('/create-for-user', validate(createForUserValidation), adminMembershipRequestController.createMembershipRequestsForUser);
+
 // Get membership request statistics
 const getStatisticsValidation = [
   query('societyId')

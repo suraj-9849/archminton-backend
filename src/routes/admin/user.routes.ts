@@ -46,6 +46,15 @@ const userIdValidation = [
 
 router.get('/:id', validate(userIdValidation), adminUserController.getUserById);
 
+// Get user's membership requests
+const userMembershipRequestsValidation = [
+  param('userId')
+    .isInt({ min: 1 })
+    .withMessage('User ID must be a positive integer')
+];
+
+router.get('/:userId/membership-requests', validate(userMembershipRequestsValidation), adminUserController.getUserMembershipRequests);
+
 // Create a new user
 const createUserValidation = [
   body('email')
@@ -68,7 +77,15 @@ const createUserValidation = [
   body('role')
     .optional()
     .isIn(Object.values(Role))
-    .withMessage('Invalid role')
+    .withMessage('Invalid role'),
+  body('selectedSocieties')
+    .optional()
+    .isArray()
+    .withMessage('Selected societies must be an array'),
+  body('selectedSocieties.*')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('All society IDs must be positive integers')
 ];
 
 router.post('/', validate(createUserValidation), adminUserController.createUser);
