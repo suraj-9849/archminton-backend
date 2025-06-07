@@ -1,4 +1,4 @@
-import { PrismaClient, SportType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 // Interface for court creation
 interface CreateCourtInput {
   name: string;
-  sportType: SportType;
+  sportType: any;
   description?: string;
   venueId: number;
   pricePerHour: number;
@@ -15,7 +15,7 @@ interface CreateCourtInput {
 // Interface for court update
 interface UpdateCourtInput {
   name?: string;
-  sportType?: SportType;
+  sportType?: any;
   description?: string;
   pricePerHour?: number;
   isActive?: boolean;
@@ -38,7 +38,7 @@ export class CourtService {
    */
   async getAllCourts(filters?: {
     venueId?: number;
-    sportType?: SportType;
+    sportType?: any;
     isActive?: boolean;
     search?: string;
   }) {

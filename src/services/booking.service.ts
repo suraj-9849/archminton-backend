@@ -3,7 +3,6 @@ import {
   BookingStatus,
   PaymentStatus,
   PaymentMethod,
-  SportType,
 } from "@prisma/client";
 import logger from "../utils/logger";
 
@@ -30,7 +29,7 @@ interface CreatePaymentInput {
 }
 
 interface BulkAvailabilityInput {
-  sportType: SportType;
+  sportType: any;
   venueId?: number;
   courts?: number[];
   fromDate: string;
@@ -40,7 +39,7 @@ interface BulkAvailabilityInput {
 }
 
 interface BulkBookingInput {
-  sportType: SportType;
+  sportType: any;
   venueId?: number;
   courts?: number[];
   fromDate: string;

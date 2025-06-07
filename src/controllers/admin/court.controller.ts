@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import courtService from "../../services/court.service";
 import { successResponse, errorResponse } from "../../utils/response";
 import logger from "../../utils/logger";
-import { SportType } from "@prisma/client";
 
 /**
  * Admin controller for court management
@@ -15,7 +14,7 @@ export class AdminCourtController {
   async getAllCourts(req: Request, res: Response): Promise<void> {
     try {
       const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
-      const sportType = req.query.sportType as SportType | undefined;
+      const sportType = req.query.sportType as any | undefined;
       const isActive =
         req.query.isActive !== undefined
           ? req.query.isActive === "true"

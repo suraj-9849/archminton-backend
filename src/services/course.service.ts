@@ -1,4 +1,4 @@
-import { PrismaClient, SportType, PaymentStatus } from '@prisma/client';
+import { PrismaClient, PaymentStatus } from '@prisma/client';
 import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 interface CreateCourseInput {
   name: string;
   description?: string;
-  sportType: SportType;
+  sportType: any;
   venueId: number;
   price: number;
   duration: number; // in days
@@ -19,7 +19,7 @@ interface CreateCourseInput {
 interface UpdateCourseInput {
   name?: string;
   description?: string;
-  sportType?: SportType;
+  sportType?: any;
   price?: number;
   duration?: number;
   startDate?: Date;
@@ -43,7 +43,7 @@ export class CourseService {
    * Get all courses with optional filters
    */
   async getAllCourses(filters?: {
-    sportType?: SportType;
+    sportType?: any;
     venueId?: number;
     isActive?: boolean;
     search?: string;

@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { PrismaClient, SportType } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { successResponse, errorResponse } from "../../utils/response";
 import logger from "../../utils/logger";
 
@@ -35,19 +35,16 @@ export class VenueSportsController {
         return;
       }
 
-      // Validate sport type enum
-      if (!Object.values(SportType).includes(sportType as SportType)) {
-        errorResponse(
-          res,
-          `Invalid sport type. Must be one of: ${Object.values(SportType).join(
-            ", "
-          )}`,
-          400
-        );
+      // For custom sports, we don't validate against the enum
+      // Just ensure it's a non-empty string
+      if (typeof sportType !== 'string' || sportType.trim() === '') {
+        errorResponse(res, "Sport type must be a valid string", 400);
         return;
       }
 
-      logger.info("Adding sport to venue:", { venueId, sportType, maxCourts });
+      const normalizedSportType = sportType.trim().toUpperCase();
+
+      logger.info("Adding sport to venue:", { venueId, sportType: normalizedSportType, maxCourts });
 
       // Check if venue exists
       const venue = await prisma.venue.findUnique({
@@ -64,13 +61,14 @@ export class VenueSportsController {
         return;
       }
 
-      // Check if sport already exists for this venue
-      const existingSport = await prisma.venueSportsConfig.findUnique({
+      // Check if sport already exists for this venue (case-insensitive)
+      const existingSport = await prisma.venueSportsConfig.findFirst({
         where: {
-          venueId_sportType: {
-            venueId,
-            sportType: sportType as SportType,
-          },
+          venueId,
+          sportType: {
+            equals: normalizedSportType,
+            mode: 'insensitive'
+          }
         },
       });
 
@@ -82,9 +80,9 @@ export class VenueSportsController {
       // Create sports configuration with proper data
       const sportsConfigData = {
         venueId: venueId,
-        sportType: sportType as SportType,
+        sportType: normalizedSportType,
         maxCourts: Number(maxCourts),
-        isActive: true, // Explicitly set to true
+        isActive: true,
       };
 
       logger.info("Creating sports config with data:", sportsConfigData);
@@ -106,7 +104,7 @@ export class VenueSportsController {
       const existingCourtsCount = await prisma.court.count({
         where: {
           venueId,
-          sportType: sportType as SportType,
+          sportType: normalizedSportType,
           isActive: true,
         },
       });
@@ -458,17 +456,13 @@ export class VenueSportsController {
         return;
       }
 
-      // Validate sport type
-      if (!Object.values(SportType).includes(sportType as SportType)) {
-        errorResponse(
-          res,
-          `Invalid sport type. Must be one of: ${Object.values(SportType).join(
-            ", "
-          )}`,
-          400
-        );
+      // For custom sports, we accept any string - no enum validation
+      if (typeof sportType !== 'string' || sportType.trim() === '') {
+        errorResponse(res, "Sport type must be a valid string", 400);
         return;
       }
+
+      const normalizedSportType = sportType.trim().toUpperCase();
 
       // Validate price
       const price = Number(pricePerHour);
@@ -492,20 +486,21 @@ export class VenueSportsController {
         return;
       }
 
-      // Check if sport is configured for this venue
-      const sportsConfig = await prisma.venueSportsConfig.findUnique({
+      // Check if sport is configured for this venue (case-insensitive)
+      const sportsConfig = await prisma.venueSportsConfig.findFirst({
         where: {
-          venueId_sportType: {
-            venueId,
-            sportType: sportType as SportType,
-          },
+          venueId,
+          sportType: {
+            equals: normalizedSportType,
+            mode: 'insensitive'
+          }
         },
       });
 
       if (!sportsConfig) {
         errorResponse(
           res,
-          `Sport ${sportType} is not configured for this venue. Please add the sport configuration first.`,
+          `Sport ${normalizedSportType} is not configured for this venue. Please add the sport configuration first.`,
           400
         );
         return;
@@ -520,7 +515,7 @@ export class VenueSportsController {
       const currentCourts = await prisma.court.count({
         where: {
           venueId,
-          sportType: sportType as SportType,
+          sportType: normalizedSportType,
           isActive: true,
         },
       });
@@ -528,7 +523,7 @@ export class VenueSportsController {
       if (currentCourts >= sportsConfig.maxCourts) {
         errorResponse(
           res,
-          `Maximum courts (${sportsConfig.maxCourts}) reached for ${sportType}. Current active courts: ${currentCourts}`,
+          `Maximum courts (${sportsConfig.maxCourts}) reached for ${normalizedSportType}. Current active courts: ${currentCourts}`,
           400
         );
         return;
@@ -595,7 +590,7 @@ export class VenueSportsController {
         const court = await tx.court.create({
           data: {
             name: name.trim(),
-            sportType: sportType as SportType,
+            sportType: normalizedSportType,
             description: description ? description.trim() : null,
             venueId,
             pricePerHour: price,
@@ -627,7 +622,7 @@ export class VenueSportsController {
       logger.info("Court added successfully:", {
         courtId: result.id,
         venueId,
-        sportType,
+        sportType: normalizedSportType,
       });
       successResponse(res, result, "Court added successfully", 201);
     } catch (error: any) {
@@ -684,11 +679,12 @@ export class VenueSportsController {
 
       const where: any = { venueId };
 
-      if (
-        sportType &&
-        Object.values(SportType).includes(sportType as SportType)
-      ) {
-        where.sportType = sportType as SportType;
+      if (sportType && typeof sportType === 'string') {
+        // For custom sports, use case-insensitive matching
+        where.sportType = {
+          equals: sportType.toString().toUpperCase(),
+          mode: 'insensitive'
+        };
       }
 
       const courts = await prisma.court.findMany({

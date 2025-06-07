@@ -3,8 +3,6 @@ import { body, param, query } from "express-validator";
 import venueSportsController from "../../controllers/admin/venueSports.controller";
 import { authenticate, adminOnly } from "../../middlewares/auth.middleware";
 import { validate } from "../../middlewares/validate.middleware";
-import { SportType } from "@prisma/client";
-
 const router = express.Router();
 
 // All routes require authentication and admin access
@@ -35,9 +33,7 @@ const slotIdValidation = [
 // Add sport to venue
 const addSportValidation = [
   ...venueIdValidation,
-  body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Valid sport type is required"),
+  body("sportType"),
   body("maxCourts")
     .isInt({ min: 1, max: 50 })
     .withMessage("Max courts must be between 1 and 50"),
@@ -100,9 +96,7 @@ const addCourtValidation = [
     .withMessage("Court name is required")
     .isLength({ min: 1, max: 100 })
     .withMessage("Court name must be between 1 and 100 characters"),
-  body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Valid sport type is required"),
+  body("sportType"),
   body("pricePerHour")
     .isFloat({ min: 0 })
     .withMessage("Price per hour must be a positive number"),
@@ -134,9 +128,7 @@ router.post(
 const getCourtsValidation = [
   ...venueIdValidation,
   query("sportType")
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage("Invalid sport type"),
+    .optional(),
 ];
 
 router.get(

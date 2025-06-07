@@ -4,7 +4,7 @@ import adminVenueController from "../../controllers/admin/venue.controller";
 import venueSportsController from "../../controllers/admin/venueSports.controller";
 import { authenticate, adminOnly } from "../../middlewares/auth.middleware";
 import { validate } from "../../middlewares/validate.middleware";
-import { VenueType, SportType } from "@prisma/client";
+import { VenueType } from "@prisma/client";
 
 const router = express.Router();
 
@@ -23,8 +23,8 @@ const getVenuesValidation = [
   query("search")
     .optional()
     .isString()
-    .trim()
-    .withMessage("Search must be a string"),
+    .withMessage("Search must be a string")
+    .trim(),
   query("venueType")
     .optional()
     .isIn(Object.values(VenueType))
@@ -63,15 +63,26 @@ const createVenueValidation = [
         VenueType
       ).join(", ")}`
     ),
-
   body("description")
-    .optional({ nullable: true, checkFalsy: false })
-    .isString()
-    .isLength({ max: 500 })
-    .withMessage("Description must not exceed 500 characters")
-    .trim(),
+    .optional()
+    .custom((value) => {
+      // Allow null, undefined, or empty string
+      if (value === null || value === undefined || value === "") return true;
+      if (typeof value !== "string") {
+        throw new Error("Description must be a string");
+      }
+      if (value.length > 500) {
+        throw new Error("Description must not exceed 500 characters");
+      }
+      return true;
+    })
+    .customSanitizer((value) => {
+      // Convert empty string to null
+      if (value === "" || value === undefined) return null;
+      return typeof value === "string" ? value.trim() : value;
+    }),
   body("latitude")
-    .optional({ nullable: true, checkFalsy: false })
+    .optional()
     .custom((value) => {
       if (value === null || value === undefined || value === "") return true;
       const num = parseFloat(value);
@@ -79,9 +90,15 @@ const createVenueValidation = [
         throw new Error("Latitude must be a number between -90 and 90");
       }
       return true;
+    })
+    .customSanitizer((value) => {
+      // Convert empty string and undefined to null
+      if (value === "" || value === undefined) return null;
+      const num = parseFloat(value);
+      return isNaN(num) ? null : num;
     }),
   body("longitude")
-    .optional({ nullable: true, checkFalsy: false })
+    .optional()
     .custom((value) => {
       if (value === null || value === undefined || value === "") return true;
       const num = parseFloat(value);
@@ -89,18 +106,27 @@ const createVenueValidation = [
         throw new Error("Longitude must be a number between -180 and 180");
       }
       return true;
+    })
+    .customSanitizer((value) => {
+      if (value === "" || value === undefined) return null;
+      const num = parseFloat(value);
+      return isNaN(num) ? null : num;
     }),
   body("contactPhone")
-    .optional({ nullable: true, checkFalsy: false })
+    .optional()
     .custom((value) => {
       if (value === null || value === undefined || value === "") return true;
       if (typeof value !== "string" || value.trim().length < 10) {
         throw new Error("Phone number must be at least 10 characters");
       }
       return true;
+    })
+    .customSanitizer((value) => {
+      if (value === "" || value === undefined) return null;
+      return typeof value === "string" ? value.trim() : value;
     }),
   body("contactEmail")
-    .optional({ nullable: true, checkFalsy: false })
+    .optional()
     .custom((value) => {
       if (value === null || value === undefined || value === "") return true;
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -108,18 +134,52 @@ const createVenueValidation = [
         throw new Error("Valid email is required");
       }
       return true;
+    })
+    .customSanitizer((value) => {
+      if (value === "" || value === undefined) return null;
+      return typeof value === "string" ? value.trim() : value;
     }),
   body("societyId")
-    .optional({ nullable: true, checkFalsy: false })
-    .custom((value) => {
-      if (value === null || value === undefined || value === "") return true;
+    .optional()
+    .custom((value, { req }) => {
+      // For PUBLIC venues, societyId should be null/undefined
+      if (req.body.venueType === "PUBLIC") {
+        if (value !== undefined && value !== null && value !== "") {
+          throw new Error("Public venues cannot have a society association");
+        }
+        return true;
+      }
+      
+      // For PRIVATE venues, societyId is required
+      if (req.body.venueType === "PRIVATE") {
+        if (value === undefined || value === null || value === "") {
+          throw new Error("Private venues must be associated with a society");
+        }
+        const num = parseInt(value);
+        if (isNaN(num) || num <= 0) {
+          throw new Error("Society ID must be a positive integer");
+        }
+        return true;
+      }
+      
+      // For other cases, allow null/undefined or valid integer
+      if (value === undefined || value === null || value === "") {
+        return true;
+      }
       const num = parseInt(value);
       if (isNaN(num) || num <= 0) {
         throw new Error("Society ID must be a positive integer");
       }
       return true;
+    })
+    .customSanitizer((value, { req }) => {
+      // Convert undefined/empty to null for PUBLIC venues
+      if (req.body.venueType === "PUBLIC" || value === "" || value === undefined) {
+        return null;
+      }
+      const num = parseInt(value);
+      return isNaN(num) ? null : num;
     }),
-
   body("services")
     .optional({ nullable: true })
     .isArray()
@@ -290,13 +350,26 @@ router.delete(
   adminVenueController.revokeVenueAccess
 );
 
+// Fixed sport validation
 const addSportValidation = [
   param("id")
     .isInt({ min: 1 })
     .withMessage("Venue ID must be a positive integer"),
   body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Valid sport type is required"),
+    .notEmpty()
+    .withMessage("Sport type is required")
+    .isString()
+    .withMessage("Sport type must be a string")
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Sport type must be between 1 and 50 characters")
+    .custom((value) => {
+      // Allow any non-empty string, but trim whitespace
+      const trimmed = value.trim();
+      if (!trimmed) {
+        throw new Error("Sport type cannot be empty or only whitespace");
+      }
+      return true;
+    }),
   body("maxCourts")
     .isInt({ min: 1, max: 50 })
     .withMessage("Max courts must be between 1 and 50"),
@@ -352,6 +425,7 @@ router.delete(
   venueSportsController.removeSportFromVenue
 );
 
+// Fixed court validation
 const addCourtValidation = [
   param("id")
     .isInt({ min: 1 })
@@ -363,8 +437,12 @@ const addCourtValidation = [
     .withMessage("Court name must be between 1 and 100 characters")
     .trim(),
   body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Valid sport type is required"),
+    .notEmpty()
+    .withMessage("Sport type is required")
+    .isString()
+    .withMessage("Sport type must be a string")
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Sport type must be between 1 and 50 characters"),
   body("pricePerHour")
     .isFloat({ min: 0 })
     .withMessage("Price per hour must be a positive number"),
@@ -399,8 +477,8 @@ const getCourtsValidation = [
     .withMessage("Venue ID must be a positive integer"),
   query("sportType")
     .optional()
-    .isIn(Object.values(SportType))
-    .withMessage("Invalid sport type"),
+    .isString()
+    .withMessage("Sport type must be a string"),
 ];
 
 router.get(

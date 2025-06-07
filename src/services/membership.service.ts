@@ -4,7 +4,6 @@ import {
   MembershipStatus,
   PaymentStatus,
   PaymentMethod,
-  SportType,
 } from "@prisma/client";
 import logger from "../utils/logger";
 
@@ -19,7 +18,7 @@ interface CreateMembershipPackageInput {
   credits?: number;
   features?: any;
   maxBookingsPerMonth?: number;
-  allowedSports?: SportType[];
+  allowedSports?: any[];
   venueAccess?: number[];
 }
 
@@ -32,7 +31,7 @@ interface UpdateMembershipPackageInput {
   credits?: number;
   features?: any;
   maxBookingsPerMonth?: number;
-  allowedSports?: SportType[];
+  allowedSports?: any[];
   venueAccess?: number[];
   isActive?: boolean;
 }

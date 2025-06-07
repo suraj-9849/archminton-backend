@@ -3,7 +3,7 @@ import { body, param, query } from 'express-validator';
 import adminCourseController from '../../controllers/admin/course.controller';
 import { authenticate, adminOnly } from '../../middlewares/auth.middleware';
 import { validate } from '../../middlewares/validate.middleware';
-import { SportType, PaymentStatus } from '@prisma/client';
+import {  PaymentStatus } from '@prisma/client';
 
 const router = express.Router();
 
@@ -22,9 +22,7 @@ const getCoursesValidation = [
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
   query('sportType')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   query('venueId')
     .optional()
     .isInt({ min: 1 })
@@ -48,9 +46,7 @@ const createCourseValidation = [
     .withMessage('Course name is required')
     .isLength({ min: 2, max: 100 })
     .withMessage('Name must be between 2 and 100 characters'),
-  body('sportType')
-    .isIn(Object.values(SportType))
-    .withMessage('Valid sport type is required'),
+  body('sportType'),
   body('venueId')
     .isInt({ min: 1 })
     .withMessage('Venue ID must be a positive integer'),
@@ -95,9 +91,7 @@ const updateCourseValidation = [
     .isLength({ min: 2, max: 100 })
     .withMessage('Name must be between 2 and 100 characters'),
   body('sportType')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   body('price')
     .optional()
     .isFloat({ min: 0 })

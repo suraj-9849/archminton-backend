@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import courseService from '../services/course.service';
 import { successResponse, errorResponse } from '../utils/response';
 import logger from '../utils/logger';
-import { SportType, PaymentStatus } from '@prisma/client';
+import {  PaymentStatus } from '@prisma/client';
 
 /**
  * Controller for course-related endpoints
@@ -14,7 +14,7 @@ export class CourseController {
    */
   async getCourses(req: Request, res: Response): Promise<void> {
     try {
-      const sportType = req.query.sportType as SportType | undefined;
+      const sportType = req.query.sportType as any | undefined;
       const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
       const isActive = req.query.isActive !== undefined 
         ? req.query.isActive === 'true' 

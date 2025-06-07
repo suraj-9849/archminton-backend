@@ -14,21 +14,21 @@ datasource db {
 }
 
 model User {
-  id                 Int                @id @default(autoincrement())
-  email              String             @unique
-  password           String
-  name               String
-  phone              String?
-  gender             String?
-  role               Role               @default(USER)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  societyMemberships SocietyMember[]
-  bookings           Booking[]
-  courseEnrollments  CourseEnrollment[]
-  venues             Venue[]            @relation("VenueUserAccess")
-  VenueUserAccess    VenueUserAccess[]
-  UserMembership     UserMembership[]
+  id                        Int                        @id @default(autoincrement())
+  email                     String                     @unique
+  password                  String
+  name                      String
+  phone                     String?
+  gender                    String?
+  role                      Role                       @default(USER)
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  societyMemberships        SocietyMember[]
+  bookings                  Booking[]
+  courseEnrollments         CourseEnrollment[]
+  venues                    Venue[]                    @relation("VenueUserAccess")
+  VenueUserAccess           VenueUserAccess[]
+  UserMembership            UserMembership[]
   societyMembershipRequests SocietyMembershipRequest[]
 
   SocietyMembershipRequest SocietyMembershipRequest[] @relation("MembershipRequestReviewer")
@@ -178,7 +178,7 @@ model MembershipPackage {
   credits             Int?             @default(0)
   features            Json?
   maxBookingsPerMonth Int?
-  allowedSports       SportType[]
+  allowedSports       String[]
   venueAccess         Int[]
   isActive            Boolean          @default(true)
   createdAt           DateTime         @default(now())
@@ -238,15 +238,15 @@ enum VenueType {
 }
 
 model VenueSportsConfig {
-  id        Int       @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   venueId   Int
-  sportType SportType
-  maxCourts Int       @default(1)
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  venue     Venue     @relation(fields: [venueId], references: [id])
-  courts    Court[]   @relation("VenueSportsCourts")
+  sportType String
+  maxCourts Int      @default(1)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  venue     Venue    @relation(fields: [venueId], references: [id])
+  courts    Court[]  @relation("VenueSportsCourts")
 
   @@unique([venueId, sportType])
 }
@@ -277,7 +277,6 @@ model VenueUserAccess {
   venue       Venue    @relation(fields: [venueId], references: [id])
   user        User     @relation(fields: [userId], references: [id])
 
-  // isActive
   @@unique([venueId, userId])
 }
 
@@ -297,7 +296,7 @@ model VenueImage {
 model Court {
   id           Int        @id @default(autoincrement())
   name         String
-  sportType    SportType
+  sportType    String
   description  String?
   venueId      Int
   pricePerHour Decimal    @db.Decimal(10, 2)
@@ -309,20 +308,6 @@ model Court {
   timeSlots    TimeSlot[]
 
   VenueSportsConfig VenueSportsConfig[] @relation("VenueSportsCourts")
-}
-
-enum SportType {
-  BADMINTON
-  TENNIS
-  FOOTBALL
-  CRICKET
-  SWIMMING
-  BASKETBALL
-  VOLLEYBALL
-  ARCHERY
-  TABLE_TENNIS
-  SQUASH
-  OTHER
 }
 
 model TimeSlot {
@@ -405,10 +390,10 @@ model Course {
   id          Int                @id @default(autoincrement())
   name        String
   description String?
-  sportType   SportType
+  sportType   String
   venueId     Int
   price       Decimal            @db.Decimal(10, 2)
-  duration    Int // in days
+  duration    Int
   startDate   DateTime?
   endDate     DateTime?
   isActive    Boolean            @default(true)

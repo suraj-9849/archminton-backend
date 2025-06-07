@@ -153,12 +153,18 @@ export class AdminVenueController {
 
       // Validate venue type
       if (!Object.values(VenueType).includes(venueType as VenueType)) {
-        errorResponse(res, `Invalid venue type. Must be one of: ${Object.values(VenueType).join(', ')}`, 400);
+        errorResponse(
+          res,
+          `Invalid venue type. Must be one of: ${Object.values(VenueType).join(
+            ", "
+          )}`,
+          400
+        );
         return;
       }
 
       // Validate society if provided
-      if (societyId !== null && societyId !== undefined && societyId !== '') {
+      if (societyId !== null && societyId !== undefined && societyId !== "") {
         const societyIdNum = parseInt(societyId);
         if (isNaN(societyIdNum) || societyIdNum <= 0) {
           errorResponse(res, "Society ID must be a positive integer", 400);
@@ -195,95 +201,170 @@ export class AdminVenueController {
         }
       }
 
-      // Prepare data for Prisma create
+      // ✅ FIXED: Prepare data for Prisma create with proper structure
       const venueData: any = {
         name: name.trim(),
         location: location.trim(),
         venueType: venueType as VenueType,
+        isActive: true, // Set default
       };
 
-      // Add optional fields only if they have values
-      if (description && description.trim()) {
+      // ✅ FIXED: Add optional fields only if they have values
+      if (
+        description &&
+        typeof description === "string" &&
+        description.trim()
+      ) {
         venueData.description = description.trim();
       }
 
-      if (latitude !== null && latitude !== undefined && latitude !== '') {
+      if (latitude !== null && latitude !== undefined && latitude !== "") {
         const lat = parseFloat(latitude);
-        if (!isNaN(lat)) {
+        if (!isNaN(lat) && lat >= -90 && lat <= 90) {
           venueData.latitude = lat;
         }
       }
 
-      if (longitude !== null && longitude !== undefined && longitude !== '') {
+      if (longitude !== null && longitude !== undefined && longitude !== "") {
         const lng = parseFloat(longitude);
-        if (!isNaN(lng)) {
+        if (!isNaN(lng) && lng >= -180 && lng <= 180) {
           venueData.longitude = lng;
         }
       }
 
-      if (contactPhone && contactPhone.trim()) {
+      if (
+        contactPhone &&
+        typeof contactPhone === "string" &&
+        contactPhone.trim()
+      ) {
         venueData.contactPhone = contactPhone.trim();
       }
 
-      if (contactEmail && contactEmail.trim()) {
+      if (
+        contactEmail &&
+        typeof contactEmail === "string" &&
+        contactEmail.trim()
+      ) {
         venueData.contactEmail = contactEmail.trim();
       }
 
-      if (societyId !== null && societyId !== undefined && societyId !== '') {
+      // ✅ FIXED: Handle societyId properly
+      if (societyId !== null && societyId !== undefined && societyId !== "") {
         const societyIdNum = parseInt(societyId);
         if (!isNaN(societyIdNum) && societyIdNum > 0) {
           venueData.societyId = societyIdNum;
         }
       }
 
-      // Handle array fields safely
+      // ✅ FIXED: Handle array fields properly - just use arrays directly
       if (services && Array.isArray(services) && services.length > 0) {
-        venueData.services = { set: services.filter(s => s && s.trim()) };
+        const validServices = services.filter(
+          (s) => s && typeof s === "string" && s.trim()
+        );
+        if (validServices.length > 0) {
+          venueData.services = validServices.map((s) => s.trim());
+        }
       }
 
       if (amenities && Array.isArray(amenities) && amenities.length > 0) {
-        venueData.amenities = { set: amenities.filter(a => a && a.trim()) };
+        const validAmenities = amenities.filter(
+          (a) => a && typeof a === "string" && a.trim()
+        );
+        if (validAmenities.length > 0) {
+          venueData.amenities = validAmenities.map((a) => a.trim());
+        }
       }
 
-      // Handle images
+      logger.info(
+        "Final venue data for Prisma:",
+        JSON.stringify(venueData, null, 2)
+      );
+
+      // ✅ FIXED: Create venue with proper transaction handling for images
+      let venue;
+
       if (images && Array.isArray(images) && images.length > 0) {
-        venueData.images = { 
-          create: images.map(img => ({
-            imageUrl: img.imageUrl.trim(),
-            isDefault: Boolean(img.isDefault)
-          }))
-        };
-      }
+        // Use transaction to create venue with images
+        venue = await prisma.$transaction(async (tx) => {
+          // Create venue first
+          const newVenue = await tx.venue.create({
+            data: venueData,
+          });
 
-      logger.info("Final venue data for Prisma:", venueData);
+          // Create images separately
+          const imageData = images
+            .filter(
+              (img) =>
+                img.imageUrl &&
+                typeof img.imageUrl === "string" &&
+                img.imageUrl.trim()
+            )
+            .map((img) => ({
+              venueId: newVenue.id,
+              imageUrl: img.imageUrl.trim(),
+              isDefault: Boolean(img.isDefault),
+            }));
 
-      const venue = await prisma.venue.create({
-        data: venueData,
-        include: {
-          society: {
-            select: { id: true, name: true },
-          },
-          sportsConfig: true,
-          images: true,
-          courts: {
-            select: {
-              sportType: true,
+          if (imageData.length > 0) {
+            await tx.venueImage.createMany({
+              data: imageData,
+            });
+          }
+
+          // Return venue with all relations
+          return await tx.venue.findUnique({
+            where: { id: newVenue.id },
+            include: {
+              society: {
+                select: { id: true, name: true },
+              },
+              sportsConfig: true,
+              images: true,
+              courts: {
+                select: {
+                  sportType: true,
+                },
+              },
+            },
+          });
+        });
+      } else {
+        // Create venue without images
+        venue = await prisma.venue.create({
+          data: venueData,
+          include: {
+            society: {
+              select: { id: true, name: true },
+            },
+            sportsConfig: true,
+            images: true,
+            courts: {
+              select: {
+                sportType: true,
+              },
             },
           },
-        },
-      });
+        });
+      }
 
+      if (!venue) {
+        errorResponse(res, "Failed to create venue", 500);
+        return;
+      }
       const formattedVenue = {
         ...venue,
         images: venue.images?.map((img) => img.imageUrl) || [],
-        services: venue.services?.map((s) => formatEnum(s)) || [],
-        amenities: venue.amenities?.map((a) => formatEnum(a)) || [],
+        services: venue.services || [],
+        amenities: venue.amenities || [],
         availableSports: [
           ...new Set(venue.courts?.map((c) => formatEnum(c.sportType)) || []),
         ],
       };
 
-      logger.info("Venue created successfully:", { id: venue.id, name: venue.name });
+      logger.info("Venue created successfully:", {
+        id: venue.id,
+        name: venue.name,
+      });
       successResponse(res, formattedVenue, "Venue created successfully", 201);
     } catch (error: any) {
       logger.error("Error creating venue:", {
@@ -293,19 +374,40 @@ export class AdminVenueController {
         meta: error.meta,
       });
 
-      // Handle specific Prisma errors
-      if (error.code === 'P2002') {
-        errorResponse(res, "A venue with this name already exists at this location", 409);
+      // ✅ FIXED: Better error handling
+      if (error.code === "P2002") {
+        errorResponse(
+          res,
+          "A venue with this name already exists at this location",
+          409
+        );
         return;
       }
 
-      if (error.code === 'P2003') {
-        errorResponse(res, "Invalid reference to society or other related entity", 400);
+      if (error.code === "P2003") {
+        errorResponse(
+          res,
+          "Invalid reference to society or other related entity",
+          400
+        );
         return;
       }
 
-      if (error.message?.includes('kind')) {
-        errorResponse(res, "Invalid data type provided. Please check your input values.", 400);
+      if (error.message?.includes("kind")) {
+        errorResponse(
+          res,
+          "Invalid data structure provided. Please check your request format.",
+          400
+        );
+        return;
+      }
+
+      if (error.message?.includes("Argument")) {
+        errorResponse(
+          res,
+          "Invalid field values provided. Please check your data types.",
+          400
+        );
         return;
       }
 
@@ -350,12 +452,18 @@ export class AdminVenueController {
 
       // Validate venue type if provided
       if (venueType && !Object.values(VenueType).includes(venueType)) {
-        errorResponse(res, `Invalid venue type. Must be one of: ${Object.values(VenueType).join(', ')}`, 400);
+        errorResponse(
+          res,
+          `Invalid venue type. Must be one of: ${Object.values(VenueType).join(
+            ", "
+          )}`,
+          400
+        );
         return;
       }
 
       // Validate society if provided
-      if (societyId !== undefined && societyId !== null && societyId !== '') {
+      if (societyId !== undefined && societyId !== null && societyId !== "") {
         const societyIdNum = parseInt(societyId);
         if (isNaN(societyIdNum) || societyIdNum <= 0) {
           errorResponse(res, "Society ID must be a positive integer", 400);
@@ -388,7 +496,7 @@ export class AdminVenueController {
       }
 
       if (latitude !== undefined) {
-        if (latitude === null || latitude === '') {
+        if (latitude === null || latitude === "") {
           updateData.latitude = null;
         } else {
           const lat = parseFloat(latitude);
@@ -399,7 +507,7 @@ export class AdminVenueController {
       }
 
       if (longitude !== undefined) {
-        if (longitude === null || longitude === '') {
+        if (longitude === null || longitude === "") {
           updateData.longitude = null;
         } else {
           const lng = parseFloat(longitude);
@@ -422,7 +530,7 @@ export class AdminVenueController {
       }
 
       if (societyId !== undefined) {
-        if (societyId === null || societyId === '') {
+        if (societyId === null || societyId === "") {
           updateData.societyId = null;
         } else {
           const societyIdNum = parseInt(societyId);
@@ -477,18 +585,30 @@ export class AdminVenueController {
       });
 
       // Handle specific Prisma errors
-      if (error.code === 'P2002') {
-        errorResponse(res, "A venue with this name already exists at this location", 409);
+      if (error.code === "P2002") {
+        errorResponse(
+          res,
+          "A venue with this name already exists at this location",
+          409
+        );
         return;
       }
 
-      if (error.code === 'P2003') {
-        errorResponse(res, "Invalid reference to society or other related entity", 400);
+      if (error.code === "P2003") {
+        errorResponse(
+          res,
+          "Invalid reference to society or other related entity",
+          400
+        );
         return;
       }
 
-      if (error.message?.includes('kind')) {
-        errorResponse(res, "Invalid data type provided. Please check your input values.", 400);
+      if (error.message?.includes("kind")) {
+        errorResponse(
+          res,
+          "Invalid data type provided. Please check your input values.",
+          400
+        );
         return;
       }
 
@@ -772,7 +892,7 @@ export default new AdminVenueController();
 function formatEnum(value: string): string {
   return value
     .toLowerCase()
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }

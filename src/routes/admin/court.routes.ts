@@ -3,7 +3,6 @@ import { body, param, query } from 'express-validator';
 import adminCourtController from '../../controllers/admin/court.controller';
 import { authenticate, adminOnly } from '../../middlewares/auth.middleware';
 import { validate } from '../../middlewares/validate.middleware';
-import { SportType } from '@prisma/client';
 
 const router = express.Router();
 
@@ -18,9 +17,7 @@ const getCourtsValidation = [
     .isInt({ min: 1 })
     .withMessage('Venue ID must be a positive integer'),
   query('sportType')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   query('isActive')
     .optional()
     .isBoolean()
@@ -40,9 +37,7 @@ const createCourtValidation = [
     .withMessage('Court name is required')
     .isLength({ min: 2, max: 100 })
     .withMessage('Name must be between 2 and 100 characters'),
-  body('sportType')
-    .isIn(Object.values(SportType))
-    .withMessage('Valid sport type is required'),
+  body('sportType'),
   body('venueId')
     .isInt({ min: 1 })
     .withMessage('Venue ID must be a positive integer'),
@@ -67,9 +62,7 @@ const updateCourtValidation = [
     .isLength({ min: 2, max: 100 })
     .withMessage('Name must be between 2 and 100 characters'),
   body('sportType')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   body('pricePerHour')
     .optional()
     .isFloat({ min: 0 })

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { PrismaClient, SportType, PaymentStatus } from '@prisma/client';
+import { PrismaClient, PaymentStatus } from '@prisma/client';
 import courseService from '../../services/course.service';
 import { successResponse, errorResponse } from '../../utils/response';
 import logger from '../../utils/logger';
@@ -18,7 +18,7 @@ export class AdminCourseController {
     try {
       const page = Number(req.query.page) || 1;
       const limit = Number(req.query.limit) || 10;
-      const sportType = req.query.sportType as SportType | undefined;
+      const sportType = req.query.sportType as any | undefined;
       const venueId = req.query.venueId ? Number(req.query.venueId) : undefined;
       const isActive = req.query.isActive !== undefined 
         ? req.query.isActive === 'true' 

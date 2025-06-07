@@ -3,7 +3,6 @@ import {
   PrismaClient,
   BookingStatus,
   PaymentStatus,
-  SportType,
   Role,
   PaymentMethod,
 } from "@prisma/client";
@@ -640,11 +639,6 @@ export class AdminBookingController {
         return;
       }
 
-      if (!Object.values(SportType).includes(sportType)) {
-        errorResponse(res, "Invalid sport type", 400);
-        return;
-      }
-
       const parsedFromDate = new Date(fromDate);
       const parsedToDate = new Date(toDate);
 
@@ -827,11 +821,6 @@ export class AdminBookingController {
 
       if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
         errorResponse(res, "Time slots must be a non-empty array", 400);
-        return;
-      }
-
-      if (!Object.values(SportType).includes(sportType)) {
-        errorResponse(res, "Invalid sport type", 400);
         return;
       }
 

@@ -4,7 +4,7 @@ import { body, param, query } from 'express-validator';
 import { adminMembershipController } from '../../controllers/admin/membership.controller';
 import { authenticate, adminOnly } from '../../middlewares/auth.middleware';
 import { validate } from '../../middlewares/validate.middleware';
-import { MembershipType, MembershipStatus, SportType, PaymentMethod } from '@prisma/client';
+import { MembershipType, MembershipStatus, PaymentMethod } from '@prisma/client';
 
 const router = express.Router();
 
@@ -70,9 +70,7 @@ const createPackageValidation = [
     .isArray()
     .withMessage('Allowed sports must be an array'),
   body('allowedSports.*')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   body('venueAccess')
     .optional()
     .isArray()

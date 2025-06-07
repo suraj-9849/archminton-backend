@@ -1,11 +1,11 @@
-import { PrismaClient, SportType, VenueType } from "@prisma/client";
+import { PrismaClient, VenueType } from "@prisma/client";
 import logger from "../utils/logger";
 
 const prisma = new PrismaClient();
 
 // Interface for venue query filters
 interface VenueFilterOptions {
-  sportType?: SportType;
+  sportType?: any;
   location?: string;
   isActive?: boolean;
 }
@@ -251,7 +251,7 @@ export class VenueService {
 
   async getCourtsByVenueAndSport(
     venueId: number,
-    sportType: SportType,
+    sportType: any,
     date?: Date
   ) {
     const venue = await prisma.venue.findUnique({

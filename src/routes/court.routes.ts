@@ -3,8 +3,6 @@ import { param, query } from 'express-validator';
 import courtController from '../controllers/court.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
-import { SportType } from '@prisma/client';
-
 const router = express.Router();
 
 // All routes require authentication
@@ -17,9 +15,7 @@ const getCourtsValidation = [
     .isInt({ min: 1 })
     .withMessage('Venue ID must be a positive integer'),
   query('sportType')
-    .optional()
-    .isIn(Object.values(SportType))
-    .withMessage('Invalid sport type'),
+    .optional(),
   query('isActive')
     .optional()
     .isBoolean()

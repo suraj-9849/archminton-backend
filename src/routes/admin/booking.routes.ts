@@ -3,7 +3,7 @@ import { body, param, query } from "express-validator";
 import adminBookingController from "../../controllers/admin/booking.controller";
 import { authenticate, adminOnly } from "../../middlewares/auth.middleware";
 import { validate } from "../../middlewares/validate.middleware";
-import { BookingStatus, PaymentStatus, SportType, Role } from "@prisma/client";
+import { BookingStatus, PaymentStatus, Role } from "@prisma/client";
 
 const router = express.Router();
 
@@ -67,9 +67,7 @@ router.get(
 );
 
 const bulkAvailabilityValidation = [
-  body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Invalid sport type"),
+  body("sportType").optional(),
   body("venueId")
     .optional()
     .isInt({ min: 1 })
@@ -141,9 +139,7 @@ const createBookingValidation = [
 // Add this route BEFORE your router.get("/:id", ...) route
 
 const bulkBookingValidation = [
-  body("sportType")
-    .isIn(Object.values(SportType))
-    .withMessage("Invalid sport type"),
+  body("sportType"),
   body("venueId")
     .optional()
     .isInt({ min: 1 })
