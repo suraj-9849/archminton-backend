@@ -391,7 +391,7 @@ export class VenueSportsController {
           },
           _count: {
             select: {
-              courts: true, 
+              courts: true,
             },
           },
         },
@@ -529,55 +529,37 @@ export class VenueSportsController {
         return;
       }
 
-      // Validate time slots
-      if (!timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) {
-        errorResponse(res, "At least one time slot is required", 400);
-        return;
-      }
-
-      // Validate each time slot
-      for (const [index, slot] of timeSlots.entries()) {
-        if (
-          typeof slot.dayOfWeek !== "number" ||
-          slot.dayOfWeek < 0 ||
-          slot.dayOfWeek > 6
-        ) {
+      // Validate time slots for duplicates and overlaps
+      const timeSlotMap = new Map();
+      for (const slot of timeSlots) {
+        const key = `${slot.dayOfWeek}-${slot.startTime}-${slot.endTime}`;
+        if (timeSlotMap.has(key)) {
           errorResponse(
             res,
-            `Invalid day of week in time slot ${index + 1}`,
+            `Duplicate time slot found: Day ${slot.dayOfWeek}, ${slot.startTime}-${slot.endTime}`,
+            400
+          );
+          return;
+        }
+        timeSlotMap.set(key, true);
+
+        // Validate time format
+        const startTime = new Date(`2000-01-01T${slot.startTime}`);
+        const endTime = new Date(`2000-01-01T${slot.endTime}`);
+
+        if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+          errorResponse(
+            res,
+            `Invalid time format in time slot: ${slot.startTime}-${slot.endTime}`,
             400
           );
           return;
         }
 
-        if (!slot.startTime || !slot.endTime) {
+        if (startTime >= endTime) {
           errorResponse(
             res,
-            `Start time and end time are required for time slot ${index + 1}`,
-            400
-          );
-          return;
-        }
-
-        // Validate time format (HH:MM)
-        const timeFormat = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        if (
-          !timeFormat.test(slot.startTime) ||
-          !timeFormat.test(slot.endTime)
-        ) {
-          errorResponse(
-            res,
-            `Invalid time format in time slot ${index + 1}. Use HH:MM format`,
-            400
-          );
-          return;
-        }
-
-        // Check if end time is after start time
-        if (slot.startTime >= slot.endTime) {
-          errorResponse(
-            res,
-            `End time must be after start time in time slot ${index + 1}`,
+            `End time must be after start time in time slot: ${slot.startTime}-${slot.endTime}`,
             400
           );
           return;
@@ -586,43 +568,121 @@ export class VenueSportsController {
 
       // Create court and time slots in a transaction
       const result = await prisma.$transaction(async (tx) => {
-        // Create court
-        const court = await tx.court.create({
-          data: {
-            name: name.trim(),
-            sportType: normalizedSportType,
-            description: description ? description.trim() : null,
+        try {
+          logger.info("Starting court creation:", {
             venueId,
-            pricePerHour: price,
-            isActive: true,
-          },
-        });
+            name,
+            sportType: normalizedSportType,
+            timeSlotsCount: timeSlots.length
+          });
 
-        // Create time slots
-        const createdTimeSlots = await Promise.all(
-          timeSlots.map((slot: any) =>
-            tx.timeSlot.create({
-              data: {
-                courtId: court.id,
-                dayOfWeek: slot.dayOfWeek,
-                startTime: slot.startTime,
-                endTime: slot.endTime,
-                isActive: true,
-              },
-            })
-          )
-        );
+          // Create court
+          const court = await tx.court.create({
+            data: {
+              name: name.trim(),
+              sportType: normalizedSportType,
+              description: description ? description.trim() : null,
+              venueId,
+              pricePerHour: price,
+              isActive: true,
+            }
+          });
 
-        return {
-          ...court,
-          timeSlots: createdTimeSlots,
-        };
+          logger.info("Court created successfully:", {
+            courtId: court.id,
+            name: court.name
+          });
+
+          // Create time slots in smaller batches of 10
+          const BATCH_SIZE = 10;
+          const createdTimeSlots = [];
+
+          // Process time slots in smaller chunks
+          for (let i = 0; i < timeSlots.length; i += BATCH_SIZE) {
+            const batch = timeSlots.slice(i, i + BATCH_SIZE);
+            logger.info(`Processing time slot batch ${i / BATCH_SIZE + 1}:`, {
+              batchSize: batch.length,
+              startIndex: i
+            });
+
+            // Create time slots for this batch
+            const batchData = batch.map((slot: { dayOfWeek: number; startTime: string; endTime: string }) => ({
+              courtId: court.id,
+              dayOfWeek: slot.dayOfWeek,
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              isActive: true,
+            }));
+
+            const batchResults = await tx.timeSlot.createMany({
+              data: batchData,
+              skipDuplicates: true
+            });
+
+            logger.info(`Batch ${i / BATCH_SIZE + 1} completed:`, {
+              createdSlots: batch.length
+            });
+          }
+
+          logger.info("All time slots created, fetching final court data");
+
+          // Fetch the complete court with all time slots
+          const updatedCourt = await tx.court.findUnique({
+            where: { id: court.id },
+            include: {
+              timeSlots: {
+                where: { isActive: true },
+                orderBy: [
+                  { dayOfWeek: 'asc' },
+                  { startTime: 'asc' }
+                ]
+              }
+            }
+          });
+
+          if (!updatedCourt) {
+            logger.error("Failed to fetch created court:", {
+              courtId: court.id
+            });
+            throw new Error('Failed to create court - Court not found after creation');
+          }
+
+          logger.info("Court creation completed successfully:", {
+            courtId: updatedCourt.id,
+            timeSlotsCount: updatedCourt.timeSlots.length
+          });
+
+          return updatedCourt;
+        } catch (error: any) {
+          // Log the error for debugging
+          logger.error("Transaction error:", {
+            error: error.message,
+            stack: error.stack,
+            code: error.code,
+            venueId,
+            courtName: name,
+            timeSlotsCount: timeSlots.length
+          });
+
+          // Handle specific Prisma errors
+          if (error.code === 'P2002') {
+            throw new Error(`A court with name "${name}" already exists in this venue`);
+          }
+          if (error.code === 'P2003') {
+            throw new Error(`Invalid venue reference: ${venueId}`);
+          }
+
+          throw error; // Re-throw to trigger transaction rollback
+        }
+      }, {
+        timeout: 30000 // Increase timeout to 30 seconds
       });
 
       logger.info("Court added successfully:", {
         courtId: result.id,
         venueId,
         sportType: normalizedSportType,
+        timeSlotsCount: result.timeSlots.length
       });
       successResponse(res, result, "Court added successfully", 201);
     } catch (error: any) {
@@ -670,6 +730,9 @@ export class VenueSportsController {
       // Check if venue exists
       const venue = await prisma.venue.findUnique({
         where: { id: venueId },
+        include: {
+          sportsConfig: true
+        }
       });
 
       if (!venue) {
@@ -677,10 +740,12 @@ export class VenueSportsController {
         return;
       }
 
-      const where: any = { venueId };
+      const where: any = {
+        venueId,
+        isActive: true
+      };
 
       if (sportType && typeof sportType === 'string') {
-        // For custom sports, use case-insensitive matching
         where.sportType = {
           equals: sportType.toString().toUpperCase(),
           mode: 'insensitive'
@@ -692,125 +757,325 @@ export class VenueSportsController {
         include: {
           timeSlots: {
             where: { isActive: true },
-            orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+            orderBy: [
+              { dayOfWeek: 'asc' },
+              { startTime: 'asc' }
+            ]
           },
           _count: {
             select: {
               bookings: {
                 where: {
                   status: {
-                    in: ["PENDING", "CONFIRMED"],
-                  },
-                },
-              },
-            },
-          },
+                    in: ["PENDING", "CONFIRMED"]
+                  }
+                }
+              }
+            }
+          }
         },
-        orderBy: {
-          createdAt: "asc",
-        },
+        orderBy: [
+          { createdAt: 'asc' }
+        ]
       });
 
-      successResponse(res, courts, "Courts retrieved successfully");
+      // Transform the response to include active bookings count
+      const transformedCourts = courts.map(court => ({
+        ...court,
+        activeBookings: court._count.bookings
+      }));
+
+      successResponse(res, transformedCourts, "Courts retrieved successfully");
     } catch (error: any) {
       logger.error("Error getting venue courts:", error);
       errorResponse(res, error.message || "Error retrieving venue courts", 500);
     }
   }
+/**
+ * Update court - FIXED TIME SLOT HANDLING WITH PROPER DELETION
+ * @route PUT /api/admin/venues/:id/courts/:courtId
+ */
+async updateCourt(req: Request, res: Response): Promise<void> {
+  try {
+    const venueId = Number(req.params.id);
+    const courtId = Number(req.params.courtId);
+    const { name, pricePerHour, description, isActive, timeSlots } = req.body;
 
-  /**
-   * Update court
-   * @route PUT /api/admin/venues/:id/courts/:courtId
-   */
-  async updateCourt(req: Request, res: Response): Promise<void> {
-    try {
-      const venueId = Number(req.params.id);
-      const courtId = Number(req.params.courtId);
-      const { name, pricePerHour, description, isActive } = req.body;
+    console.log('=== COURT UPDATE START ===');
+    console.log('Venue ID:', venueId);
+    console.log('Court ID:', courtId);
+    console.log('Time slots received:', timeSlots ? timeSlots.length : 'none');
+    console.log('Request body keys:', Object.keys(req.body));
 
-      if (isNaN(venueId) || isNaN(courtId) || venueId <= 0 || courtId <= 0) {
-        errorResponse(res, "Invalid venue ID or court ID", 400);
-        return;
-      }
+    if (isNaN(venueId) || isNaN(courtId) || venueId <= 0 || courtId <= 0) {
+      errorResponse(res, "Invalid venue ID or court ID", 400);
+      return;
+    }
 
-      // Check if court exists and belongs to venue
-      const existingCourt = await prisma.court.findUnique({
-        where: { id: courtId },
-        include: {
-          bookings: {
-            where: {
-              status: {
-                in: ["PENDING", "CONFIRMED"],
-              },
+    // Check if court exists and belongs to venue
+    const existingCourt = await prisma.court.findUnique({
+      where: { id: courtId },
+      include: {
+        bookings: {
+          where: {
+            status: {
+              in: ["PENDING", "CONFIRMED"],
             },
           },
         },
-      });
+        timeSlots: {
+          where: { isActive: true }
+        },
+      },
+    });
 
-      if (!existingCourt || existingCourt.venueId !== venueId) {
-        errorResponse(res, "Court not found", 404);
+    if (!existingCourt || existingCourt.venueId !== venueId) {
+      errorResponse(res, "Court not found", 404);
+      return;
+    }
+
+    console.log('Existing court found with', existingCourt.timeSlots.length, 'active time slots');
+
+    // If deactivating court, check for active bookings
+    if (isActive === false && existingCourt.bookings.length > 0) {
+      errorResponse(res, "Cannot deactivate court with active bookings", 400);
+      return;
+    }
+
+    // Prepare update data for court basic info
+    const updateData: any = {};
+
+    if (name !== undefined) {
+      updateData.name = name.trim();
+    }
+
+    if (pricePerHour !== undefined) {
+      const price = Number(pricePerHour);
+      if (isNaN(price) || price < 0) {
+        errorResponse(
+          res,
+          "Price per hour must be a non-negative number",
+          400
+        );
         return;
       }
+      updateData.pricePerHour = price;
+    }
 
-      // If deactivating court, check for active bookings
-      if (isActive === false && existingCourt.bookings.length > 0) {
-        errorResponse(res, "Cannot deactivate court with active bookings", 400);
-        return;
-      }
+    if (description !== undefined) {
+      updateData.description = description ? description.trim() : null;
+    }
 
-      // Prepare update data
-      const updateData: any = {};
+    if (isActive !== undefined) {
+      updateData.isActive = Boolean(isActive);
+    }
 
-      if (name !== undefined) {
-        updateData.name = name.trim();
-      }
+    console.log('Update data prepared:', Object.keys(updateData));
 
-      if (pricePerHour !== undefined) {
-        const price = Number(pricePerHour);
-        if (isNaN(price) || price < 0) {
-          errorResponse(
-            res,
-            "Price per hour must be a non-negative number",
-            400
-          );
-          return;
-        }
-        updateData.pricePerHour = price;
-      }
-
-      if (description !== undefined) {
-        updateData.description = description ? description.trim() : null;
-      }
-
-      if (isActive !== undefined) {
-        updateData.isActive = Boolean(isActive);
-      }
-
-      // Only update if there's data to update
-      if (Object.keys(updateData).length === 0) {
-        errorResponse(res, "No valid fields to update", 400);
-        return;
-      }
-
-      // Update court
-      const updatedCourt = await prisma.court.update({
+    const result = await prisma.$transaction(async (tx) => {
+      console.log('=== TRANSACTION START ===');
+      
+      // Update court basic info
+      const updatedCourt = await tx.court.update({
         where: { id: courtId },
         data: updateData,
-        include: {
-          timeSlots: {
-            where: { isActive: true },
-            orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
-          },
-        },
       });
 
-      successResponse(res, updatedCourt, "Court updated successfully");
-    } catch (error: any) {
-      logger.error("Error updating court:", error);
-      errorResponse(res, error.message || "Error updating court", 400);
-    }
-  }
+      console.log('Court basic info updated successfully');
 
+      let finalTimeSlots = [];
+
+      // Handle time slots ONLY if they are explicitly provided and is an array
+      if (timeSlots && Array.isArray(timeSlots)) {
+        console.log('Processing', timeSlots.length, 'time slots');
+        
+        // Validate time slots format first
+        const invalidSlots = timeSlots.filter((slot: any) => 
+          typeof slot.dayOfWeek !== 'number' || 
+          !slot.startTime || 
+          !slot.endTime ||
+          slot.dayOfWeek < 0 || 
+          slot.dayOfWeek > 6
+        );
+
+        if (invalidSlots.length > 0) {
+          console.error('Invalid time slots found:', invalidSlots.slice(0, 3));
+          throw new Error(`Invalid time slot format. Found ${invalidSlots.length} invalid slots.`);
+        }
+
+        // Validate that start time is before end time
+        for (const slot of timeSlots) {
+          const startTime = new Date(`2000-01-01T${slot.startTime}`);
+          const endTime = new Date(`2000-01-01T${slot.endTime}`);
+          
+          if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+            throw new Error(`Invalid time format in slot: ${slot.startTime}-${slot.endTime}`);
+          }
+          
+          if (startTime >= endTime) {
+            throw new Error(`End time must be after start time: ${slot.startTime}-${slot.endTime}`);
+          }
+        }
+
+        console.log('Time slots validation passed');
+
+        // Check for existing bookings in time slots we're about to delete
+        const existingBookings = await tx.booking.findMany({
+          where: {
+            timeSlot: {
+              courtId: courtId,
+              isActive: true
+            },
+            status: {
+              in: ["PENDING", "CONFIRMED"]
+            }
+          },
+          include: {
+            timeSlot: true
+          }
+        });
+
+        if (existingBookings.length > 0) {
+          throw new Error(`Cannot update time slots. There are ${existingBookings.length} active bookings for this court.`);
+        }
+
+        // Step 1: COMPLETELY DELETE existing time slots for this court
+        const deleteResult = await tx.timeSlot.deleteMany({
+          where: { 
+            courtId: courtId
+          },
+        });
+
+        console.log('Deleted', deleteResult.count, 'existing time slots');
+
+        // Step 2: Prepare new time slots data with deduplication
+        const timeSlotsData = timeSlots.map((slot: any) => ({
+          courtId: courtId,
+          dayOfWeek: Number(slot.dayOfWeek),
+          startTime: slot.startTime.toString(),
+          endTime: slot.endTime.toString(),
+          isActive: true,
+        }));
+
+        // Remove duplicates based on the unique constraint fields
+        const uniqueTimeSlots = timeSlotsData.filter((slot, index, self) => {
+          return index === self.findIndex(s => 
+            s.courtId === slot.courtId &&
+            s.dayOfWeek === slot.dayOfWeek &&
+            s.startTime === slot.startTime &&
+            s.endTime === slot.endTime
+          );
+        });
+
+        console.log('Prepared', uniqueTimeSlots.length, 'unique time slots for creation');
+        console.log('Removed', timeSlotsData.length - uniqueTimeSlots.length, 'duplicate time slots');
+
+        // Step 3: Create new time slots in batches
+        const BATCH_SIZE = 20;
+        let totalCreated = 0;
+
+        for (let i = 0; i < uniqueTimeSlots.length; i += BATCH_SIZE) {
+          const batch = uniqueTimeSlots.slice(i, i + BATCH_SIZE);
+          console.log(`Creating batch ${Math.floor(i/BATCH_SIZE) + 1}:`, batch.length, 'slots');
+          
+          try {
+            const createResult = await tx.timeSlot.createMany({
+              data: batch,
+              skipDuplicates: true, // Additional safety against duplicates
+            });
+            
+            totalCreated += createResult.count;
+            console.log('Batch created successfully, count:', createResult.count);
+          } catch (batchError: any) {
+            console.error('Batch creation error:', batchError);
+            console.error('Problematic batch:', batch);
+            throw new Error(`Failed to create time slots batch: ${batchError.message}`);
+          }
+        }
+
+        console.log('Total time slots created:', totalCreated);
+
+        // Step 4: Fetch the newly created time slots
+        finalTimeSlots = await tx.timeSlot.findMany({
+          where: { 
+            courtId: courtId, 
+            isActive: true 
+          },
+          orderBy: [
+            { dayOfWeek: 'asc' },
+            { startTime: 'asc' }
+          ]
+        });
+
+        console.log('Final active time slots count:', finalTimeSlots.length);
+
+        // Validation: Ensure we have the expected number of time slots
+        if (finalTimeSlots.length !== uniqueTimeSlots.length) {
+          console.warn(`Warning: Expected ${uniqueTimeSlots.length} time slots but found ${finalTimeSlots.length}`);
+          
+          // Log the difference for debugging
+          const expectedKeys = uniqueTimeSlots.map(s => `${s.dayOfWeek}-${s.startTime}-${s.endTime}`);
+          const actualKeys = finalTimeSlots.map(s => `${s.dayOfWeek}-${s.startTime}-${s.endTime}`);
+          
+          console.log('Expected time slots:', expectedKeys);
+          console.log('Actual time slots:', actualKeys);
+          
+          const missing = expectedKeys.filter(key => !actualKeys.includes(key));
+          const extra = actualKeys.filter(key => !expectedKeys.includes(key));
+          
+          if (missing.length > 0) console.log('Missing time slots:', missing);
+          if (extra.length > 0) console.log('Extra time slots:', extra);
+        }
+
+      } else {
+        console.log('No time slots provided or not an array, keeping existing ones');
+        
+        // Keep existing time slots if none provided
+        finalTimeSlots = await tx.timeSlot.findMany({
+          where: { 
+            courtId: courtId, 
+            isActive: true 
+          },
+          orderBy: [
+            { dayOfWeek: 'asc' },
+            { startTime: 'asc' }
+          ]
+        });
+
+        console.log('Kept existing time slots count:', finalTimeSlots.length);
+      }
+
+      console.log('=== TRANSACTION END ===');
+
+      return {
+        ...updatedCourt,
+        timeSlots: finalTimeSlots,
+      };
+    }, {
+      timeout: 60000, // 60 seconds timeout
+      maxWait: 10000,
+    });
+
+    console.log('=== COURT UPDATE SUCCESS ===');
+    console.log('Response time slots count:', result.timeSlots.length);
+    
+    successResponse(res, result, "Court updated successfully");
+  } catch (error: any) {
+    console.error('=== COURT UPDATE ERROR ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    logger.error("Error updating court:", {
+      error: error.message,
+      stack: error.stack,
+      venueId: req.params.id,
+      courtId: req.params.courtId,
+      timeSlotsCount: req.body.timeSlots ? req.body.timeSlots.length : 0
+    });
+    
+    errorResponse(res, error.message || "Error updating court", 400);
+  }
+}
   /**
    * Delete court
    * @route DELETE /api/admin/venues/:id/courts/:courtId
